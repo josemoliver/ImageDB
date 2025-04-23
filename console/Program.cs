@@ -22,6 +22,7 @@ using System.Diagnostics.Metrics;
 using System.Data.Common;
 using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
+using System.Text.Encodings.Web;
 
 
 using var db = new CDatabaseImageDBsqliteContext();
@@ -210,7 +211,19 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         }
 
         // Save changes to the database
-        dbFiles.SaveChanges();
+        int retryCount = 5;
+        while (retryCount-- > 0)
+        {
+            try
+            {
+                dbFiles.SaveChanges();
+                break;
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+            {
+                Thread.Sleep(100); // Wait and retry
+            }
+        }
 
         // Update the batch entry with the results
         using var dbFilesUpdate = new CDatabaseImageDBsqliteContext();
@@ -402,6 +415,10 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
         string creator                  = "";
         string copyright                = "";
 
+        string stringLatitude = "";
+        string stringLongitude = "";
+        string stringAltitude = "";
+
         decimal? latitude;
         decimal? longitude;
         decimal? altitude;
@@ -444,57 +461,54 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
     }
 
     if (jsonMetadata != "")
-    {
-            // Parse the JSON string dynamically into a JsonDocument
-            using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
+    {             
+
+        // Parse the JSON string dynamically into a JsonDocument
+        using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
             {
                 //Title
-                if (doc.RootElement.TryGetProperty("XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
+                if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
                 { title = propertyXPTitle.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("Headline", out var propertyHeadline) && !string.IsNullOrWhiteSpace(propertyHeadline.GetString()))
+                if (doc.RootElement.TryGetProperty("IPTC:Headline", out var propertyHeadline) && !string.IsNullOrWhiteSpace(propertyHeadline.GetString()))
                 { title = propertyHeadline.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("ObjectName", out var propertyObjectName) && !string.IsNullOrWhiteSpace(propertyObjectName.GetString()))
+                if (doc.RootElement.TryGetProperty("IPTC:ObjectName", out var propertyObjectName) && !string.IsNullOrWhiteSpace(propertyObjectName.GetString()))
                 { title = propertyObjectName.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("Title", out var propertyTitle) && !string.IsNullOrWhiteSpace(propertyTitle.GetString()))
+                if (doc.RootElement.TryGetProperty("XMP-dc:Title", out var propertyTitle) && !string.IsNullOrWhiteSpace(propertyTitle.GetString()))
                 { title = propertyTitle.GetString() ?? ""; }
 
-                //Description
-                if (doc.RootElement.TryGetProperty("UserComment", out var propertyUserComment) && !string.IsNullOrWhiteSpace(propertyUserComment.GetString()))
+            //Description
+                if (doc.RootElement.TryGetProperty("XMP-tiff:ImageDescription", out var propertyTiffImageDescription) && !string.IsNullOrWhiteSpace(propertyTiffImageDescription.GetString()))
+                { description = propertyTiffImageDescription.GetString() ?? ""; }
+                if (doc.RootElement.TryGetProperty("ExifIFD:UserComment", out var propertyUserComment) && !string.IsNullOrWhiteSpace(propertyUserComment.GetString()))
                 { description = propertyUserComment.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("XPComment", out var propertyXPComment) && !string.IsNullOrWhiteSpace(propertyXPComment.GetString()))
+                if (doc.RootElement.TryGetProperty("IFD0:XPComment", out var propertyXPComment) && !string.IsNullOrWhiteSpace(propertyXPComment.GetString()))
                 { description = propertyXPComment.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("ImageDescription", out var propertyImageDescription) && !string.IsNullOrWhiteSpace(propertyImageDescription.GetString()))
+                if (doc.RootElement.TryGetProperty("IFD0:ImageDescription", out var propertyImageDescription) && !string.IsNullOrWhiteSpace(propertyImageDescription.GetString()))
                 { description = propertyImageDescription.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("Caption-Abstract", out var propertyCaptionAbstract) && !string.IsNullOrWhiteSpace(propertyCaptionAbstract.GetString()))
+                if (doc.RootElement.TryGetProperty("IPTC:Caption-Abstract", out var propertyCaptionAbstract) && !string.IsNullOrWhiteSpace(propertyCaptionAbstract.GetString()))
                 { description = propertyCaptionAbstract.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("Description", out var propertyDescription) && !string.IsNullOrWhiteSpace(propertyDescription.GetString()))
+                if (doc.RootElement.TryGetProperty("XMP-dc:Description", out var propertyDescription) && !string.IsNullOrWhiteSpace(propertyDescription.GetString()))
                 { description = propertyDescription.GetString() ?? ""; }
 
                 //Rating
-                if (doc.RootElement.TryGetProperty("Rating", out var propertyRating))
-                {
-                    if (propertyRating.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(propertyRating.GetString()))
-                    {
-                        rating = propertyRating.GetString() ?? "";
-                    }
-                    else if (propertyRating.ValueKind == JsonValueKind.Number)
-                    {
-                        rating = propertyRating.GetInt32().ToString(); // Adjust as needed
-                    }
-                }
+                if (doc.RootElement.TryGetProperty("XMP-xmp:Rating", out var propertyXMPRating) && !string.IsNullOrWhiteSpace(propertyXMPRating.GetString()))
+                { rating = propertyXMPRating.GetString() ?? ""; }
+                if (doc.RootElement.TryGetProperty("IFD0:Rating", out var propertyRating) && !string.IsNullOrWhiteSpace(propertyRating.GetString()))
+                { rating = propertyRating.GetString() ?? ""; }
 
-           
                 // Get DateTimeTaken
                 string xmpDateTime = "";
-                if (doc.RootElement.TryGetProperty("DateCreated", out var propertyDateCreated) && !string.IsNullOrWhiteSpace(propertyDateCreated.GetString()))
-                { dateTimeTaken = propertyDateCreated.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("DateTimeCreated", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
+                if (doc.RootElement.TryGetProperty("System:FileCreateDate", out var propertyFileDateCreated) && !string.IsNullOrWhiteSpace(propertyFileDateCreated.GetString()))
+                { dateTimeTaken = propertyFileDateCreated.GetString() ?? ""; }
+                if (doc.RootElement.TryGetProperty("Composite:DateTimeCreated", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
                 { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; xmpDateTime = propertyDateTimeCreated.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
+                if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
+                { dateTimeTaken = propertyPhotoshopDate.GetString() ?? ""; }
+                if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
                 { dateTimeTaken = propertyDateTimeOriginal.GetString() ?? "";  }
 
                 //Get TimeZone
-                if (doc.RootElement.TryGetProperty("OffsetTimeOriginal", out var propertyOffsetTimeOriginal) && !string.IsNullOrWhiteSpace(propertyOffsetTimeOriginal.GetString()))
+                if (doc.RootElement.TryGetProperty("ExifIFD:OffsetTimeOriginal", out var propertyOffsetTimeOriginal) && !string.IsNullOrWhiteSpace(propertyOffsetTimeOriginal.GetString()))
                 { 
                     dateTimeTakenTimeZone = propertyOffsetTimeOriginal.GetString() ?? ""; 
                 }
@@ -521,59 +535,81 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
 
 
             // Get Device Make
-            deviceMake = doc.RootElement.TryGetProperty("Make", out JsonElement propertyDeviceMake) ? propertyDeviceMake.GetString() : "";
-            deviceModel = doc.RootElement.TryGetProperty("Model", out JsonElement propertyDeviceModel) ? propertyDeviceModel.GetString() : "";
+            deviceMake = doc.RootElement.TryGetProperty("IFD0:Make", out JsonElement propertyDeviceMake) ? propertyDeviceMake.GetString() : "";
+            deviceModel = doc.RootElement.TryGetProperty("IFD0:Model", out JsonElement propertyDeviceModel) ? propertyDeviceModel.GetString() : "";
             device = DeviceHelper.GetDevice(deviceMake, deviceModel);
             
             // Get Geocoordinates
-            latitude = doc.RootElement.TryGetProperty("GPSLatitude", out JsonElement propertyLatitude) && propertyLatitude.ValueKind == JsonValueKind.Number? propertyLatitude.GetDecimal(): null;
-            longitude = doc.RootElement.TryGetProperty("GPSLongitude", out JsonElement propertyLongitude) && propertyLongitude.ValueKind == JsonValueKind.Number? propertyLongitude.GetDecimal(): null;
-            altitude = doc.RootElement.TryGetProperty("GPSAltitude", out JsonElement propertyAltitude) && propertyAltitude.ValueKind == JsonValueKind.Number? propertyAltitude.GetDecimal(): null;
+            stringLatitude = doc.RootElement.TryGetProperty("GPS:GPSLatitude", out JsonElement propertyLatitude) && propertyLatitude.ValueKind == JsonValueKind.String? propertyLatitude.GetString(): "";
+            stringLongitude = doc.RootElement.TryGetProperty("GPS:GPSLongitude", out JsonElement propertyLongitude) && propertyLongitude.ValueKind == JsonValueKind.String ? propertyLongitude.GetString(): "";
+            stringAltitude = doc.RootElement.TryGetProperty("GPS:GPSAltitude", out JsonElement propertyAltitude) && propertyAltitude.ValueKind == JsonValueKind.String ? propertyAltitude.GetString(): "";
+
+            latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
+            longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
+            altitude = string.IsNullOrWhiteSpace(stringAltitude) ? null : decimal.Parse(stringAltitude, CultureInfo.InvariantCulture);
 
             // Get Location
-            if (doc.RootElement.TryGetProperty("Sub-location", out var propertySubLocation) && !string.IsNullOrWhiteSpace(propertySubLocation.GetString()))
-            { location = propertySubLocation.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("Location", out var propertyLocation) && !string.IsNullOrWhiteSpace(propertyLocation.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-iptcCore:Location", out var propertyLocation) && !string.IsNullOrWhiteSpace(propertyLocation.GetString()))
             { location = propertyLocation.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("LocationCreatedSublocation", out var propertySubLocationCreated) && !string.IsNullOrWhiteSpace(propertySubLocationCreated.GetString()))
+            if (doc.RootElement.TryGetProperty("IPTC:Sub-location", out var propertySubLocation) && !string.IsNullOrWhiteSpace(propertySubLocation.GetString()))
+            { location = propertySubLocation.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedSublocation", out var propertySubLocationCreated) && !string.IsNullOrWhiteSpace(propertySubLocationCreated.GetString()))
             { location = propertySubLocationCreated.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("LocationCreatedLocation", out var propertyLocationCreated) && !string.IsNullOrWhiteSpace(propertyLocationCreated.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedLocation", out var propertyLocationCreated) && !string.IsNullOrWhiteSpace(propertyLocationCreated.GetString()))
             { location = propertyLocationCreated.GetString() ?? ""; }
 
             // Get City
-            if (doc.RootElement.TryGetProperty("City", out var propertyCity) && !string.IsNullOrWhiteSpace(propertyCity.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-photoshop:City", out var propertyPhotoshopCity) && !string.IsNullOrWhiteSpace(propertyPhotoshopCity.GetString()))
+            { city = propertyPhotoshopCity.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IPTC:City", out var propertyCity) && !string.IsNullOrWhiteSpace(propertyCity.GetString()))
             { city = propertyCity.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("LocationCreatedCity", out var propertyLocationCreatedCity) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCity.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCity", out var propertyLocationCreatedCity) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCity.GetString()))
             { city = propertyLocationCreatedCity.GetString() ?? ""; }
 
             // Get State-Province
-            if (doc.RootElement.TryGetProperty("City", out var propertyStateProvince) && !string.IsNullOrWhiteSpace(propertyCity.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-photoshop:State", out var propertyPhotoshopState) && !string.IsNullOrWhiteSpace(propertyPhotoshopState.GetString()))
+            { stateProvince = propertyPhotoshopState.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IPTC:Province-State", out var propertyStateProvince) && !string.IsNullOrWhiteSpace(propertyStateProvince.GetString()))
             { stateProvince = propertyStateProvince.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("LocationCreatedStateProvince", out var propertyLocationCreatedStateProvince) && !string.IsNullOrWhiteSpace(propertyLocationCreatedStateProvince.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedProvinceState", out var propertyLocationCreatedStateProvince) && !string.IsNullOrWhiteSpace(propertyLocationCreatedStateProvince.GetString()))
             { city = propertyLocationCreatedStateProvince.GetString() ?? ""; }
 
             // Get Country
-            if (doc.RootElement.TryGetProperty("City", out var propertyCountry) && !string.IsNullOrWhiteSpace(propertyCountry.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-photoshop:Country", out var propertyPhotoshopCountry) && !string.IsNullOrWhiteSpace(propertyPhotoshopCountry.GetString()))
+            { country = propertyPhotoshopCountry.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IPTC:Country-PrimaryLocationName", out var propertyCountry) && !string.IsNullOrWhiteSpace(propertyCountry.GetString()))
             { country = propertyCountry.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("LocationCreatedCountry", out var propertyLocationCreatedCountry) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountry.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCountryName", out var propertyLocationCreatedCountry) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountry.GetString()))
             { country = propertyLocationCreatedCountry.GetString() ?? ""; }
 
             // Get Country Code
-            if (doc.RootElement.TryGetProperty("CountryCode", out var propertyCountryCode) && !string.IsNullOrWhiteSpace(propertyCountryCode.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-iptcCore:CountryCode", out var propertyCountryCode) && !string.IsNullOrWhiteSpace(propertyCountryCode.GetString()))
             { countryCode = propertyCountryCode.GetString() ?? ""; }
-            if (doc.RootElement.TryGetProperty("LocationCreatedCountryCode", out var propertyLocationCreatedCountryCode) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountryCode.GetString()))
+            if (doc.RootElement.TryGetProperty("IPTC:Country-PrimaryLocationCode", out var propertyIPTCCountryCode) && !string.IsNullOrWhiteSpace(propertyIPTCCountryCode.GetString()))
+            { countryCode = propertyIPTCCountryCode.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCountryCode", out var propertyLocationCreatedCountryCode) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountryCode.GetString()))
             { countryCode = propertyLocationCreatedCountryCode.GetString() ?? ""; }
 
             // Get Creator
-            if (doc.RootElement.TryGetProperty("Creator", out var propertyCreator) && !string.IsNullOrWhiteSpace(propertyCreator.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-tiff:Artist", out var propertyTiffArtist) && !string.IsNullOrWhiteSpace(propertyTiffArtist.GetString()))
+            { creator = propertyTiffArtist.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("XMP-dc:Creator", out var propertyCreator) && !string.IsNullOrWhiteSpace(propertyCreator.GetString()))
             { creator = propertyCreator.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IPTC:By-line", out var propertyIPTCByLine) && !string.IsNullOrWhiteSpace(propertyIPTCByLine.GetString()))
+            { creator = propertyIPTCByLine.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IFD0:Artist", out var propertyEXIFArtist) && !string.IsNullOrWhiteSpace(propertyEXIFArtist.GetString()))
+            { creator = propertyEXIFArtist.GetString() ?? ""; }
 
             // Get Copyright
-            if (doc.RootElement.TryGetProperty("Copyright", out var propertyCopyright) && !string.IsNullOrWhiteSpace(propertyCopyright.GetString()))
+            if (doc.RootElement.TryGetProperty("XMP-dc:Rights", out var propertyRights) && !string.IsNullOrWhiteSpace(propertyRights.GetString()))
+            { copyright = propertyRights.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IPTC:CopyrightNotice", out var propertyCopyrightNotice) && !string.IsNullOrWhiteSpace(propertyCopyrightNotice.GetString()))
+            { copyright = propertyCopyrightNotice.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("IFD0:Copyright", out var propertyCopyright) && !string.IsNullOrWhiteSpace(propertyCopyright.GetString()))
             { copyright = propertyCopyright.GetString() ?? ""; }
 
             // Check if the RegionPersonDisplayName property exists
-            if (doc.RootElement.TryGetProperty("RegionPersonDisplayName", out JsonElement regionPersonDisplayName))
+            if (doc.RootElement.TryGetProperty("XMP-MP:RegionPersonDisplayName", out JsonElement regionPersonDisplayName))
             {
                 // If it's a string
                 if (regionPersonDisplayName.ValueKind == JsonValueKind.String)
@@ -591,7 +627,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
     }
 
             // Check if the RegionPersonDisplayName property exists
-            if (doc.RootElement.TryGetProperty("RegionName", out JsonElement regionName))
+            if (doc.RootElement.TryGetProperty("XMP-mwg-rs:RegionName", out JsonElement regionName))
             {
                 // If it's a string
                 if (regionName.ValueKind == JsonValueKind.String)
@@ -610,7 +646,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             }
 
             // Check if the PersonInImage property exists
-            if (doc.RootElement.TryGetProperty("PersonInImage", out JsonElement personInImage))
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:PersonInImage", out JsonElement personInImage))
             {
                 // If it's a string
                 if (personInImage.ValueKind == JsonValueKind.String)
@@ -1018,10 +1054,13 @@ public static class ExifToolHelper
                     StartExifTool();
 
                 var cmd = new StringBuilder();
-                cmd.AppendLine($"-json");
-                cmd.AppendLine($"-n");
-                cmd.AppendLine(filepath);
-                cmd.AppendLine("-execute");
+                
+                // Add command options
+                cmd.AppendLine($"-json");   // JSON output
+                cmd.AppendLine($"-G1");     // Group output by tag
+                cmd.AppendLine($"-n");      // Numeric output     
+                cmd.AppendLine(filepath);   // File path
+                cmd.AppendLine("-execute"); // Execute the command
 
                 exiftoolInput!.Write(cmd.ToString());
                 exiftoolInput.Flush();
@@ -1038,9 +1077,12 @@ public static class ExifToolHelper
                 }
 
                 string result = outputBuilder.ToString().Trim();
-                
+
                 //Console.WriteLine("JSON:\n" + result);
-                return result.Trim('[', ']'); // clean up array brackets
+
+                result = result.Trim('[', ']');
+                result = JsonConverter.ConvertNumericAndBooleanValuesToString(result);
+                return result; // clean up array brackets
             }
             catch (Exception ex)
             {
@@ -1195,5 +1237,54 @@ public class DescriptiveTagService
 
         dbFiles.RelationTags.Add(relationEntry);
         await dbFiles.SaveChangesAsync();
+    }
+}
+
+public class JsonConverter
+{
+    public static string ConvertNumericAndBooleanValuesToString(string json)
+    {
+        // Parse the JSON document
+        JsonDocument doc = JsonDocument.Parse(json);
+        var rootElement = doc.RootElement;
+
+        // Recursively convert all numeric and boolean values to strings
+        JsonElement transformedElement = TransformJsonElement(rootElement);
+
+        // Serialize the modified JSON to a human-readable string with UTF-8 characters
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping // Allow UTF-8 characters
+        };
+
+        return JsonSerializer.Serialize(transformedElement, options);
+    }
+
+    private static JsonElement TransformJsonElement(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var objectDict = new System.Collections.Generic.Dictionary<string, JsonElement>();
+                foreach (var property in element.EnumerateObject())
+                {
+                    objectDict[property.Name] = TransformJsonElement(property.Value);
+                }
+                return JsonDocument.Parse(JsonSerializer.Serialize(objectDict)).RootElement;
+            case JsonValueKind.Array:
+                var arrayList = new System.Collections.Generic.List<JsonElement>();
+                foreach (var item in element.EnumerateArray())
+                {
+                    arrayList.Add(TransformJsonElement(item));
+                }
+                return JsonDocument.Parse(JsonSerializer.Serialize(arrayList)).RootElement;
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                return JsonDocument.Parse($"\"{element.ToString()}\"").RootElement; // Convert numeric and boolean to string
+            default:
+                return element; // For other types (null, string, etc.), return as is
+        }
     }
 }
