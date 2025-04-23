@@ -33,7 +33,6 @@ string photoFolderFilter = string.Empty;
 //DEBUG VALUE
 //photoFolderFilter = "D:\\users\\jose\\Pictures\\Photos\\2024";
 
-
 if (photoFolderFilter != "")
 {
     photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
@@ -477,12 +476,12 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 { title = propertyTitle.GetString() ?? ""; }
 
             //Description
+                if (doc.RootElement.TryGetProperty("IFD0:XPComment", out var propertyXPComment) && !string.IsNullOrWhiteSpace(propertyXPComment.GetString()))
+                { description = propertyXPComment.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-tiff:ImageDescription", out var propertyTiffImageDescription) && !string.IsNullOrWhiteSpace(propertyTiffImageDescription.GetString()))
                 { description = propertyTiffImageDescription.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("ExifIFD:UserComment", out var propertyUserComment) && !string.IsNullOrWhiteSpace(propertyUserComment.GetString()))
                 { description = propertyUserComment.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("IFD0:XPComment", out var propertyXPComment) && !string.IsNullOrWhiteSpace(propertyXPComment.GetString()))
-                { description = propertyXPComment.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IFD0:ImageDescription", out var propertyImageDescription) && !string.IsNullOrWhiteSpace(propertyImageDescription.GetString()))
                 { description = propertyImageDescription.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IPTC:Caption-Abstract", out var propertyCaptionAbstract) && !string.IsNullOrWhiteSpace(propertyCaptionAbstract.GetString()))
