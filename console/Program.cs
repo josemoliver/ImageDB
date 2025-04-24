@@ -23,7 +23,21 @@ using System.Data.Common;
 using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using System.Text.Encodings.Web;
+using System.CommandLine;
+using System.CommandLine.Invocation;
+using System.CommandLine.NamingConventionBinder;
 
+var rootCommand = new RootCommand
+{
+    new Option<string>(
+        "--folder",
+        description: "Path to specific library to scan."
+    ),
+    new Option<string>(
+        "--reloadmeta",
+        description: "Re-process already scanned metatada."
+    )
+};
 
 using var db = new CDatabaseImageDBsqliteContext();
 
@@ -33,14 +47,27 @@ string photoFolderFilter = string.Empty;
 //DEBUG VALUE
 //photoFolderFilter = "D:\\users\\jose\\Pictures\\Photos\\2024";
 
-if (photoFolderFilter != "")
+
+// Handler to process the command-line arguments
+rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta) =>
 {
-    photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
-    Console.WriteLine("[START] - Filtered by folder: " + photoFolderFilter);
+    photoFolderFilter = folder;
+
+    return Task.CompletedTask;
+});
+
+// Parse and invoke the command
+await rootCommand.InvokeAsync(args);
+
+
+if (string.IsNullOrEmpty(photoFolderFilter))
+{
+    Console.WriteLine("[START] - No filter applied");
 }
 else
 {
-    Console.WriteLine("[START] - No filter applied");
+    photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
+    Console.WriteLine("[START] - Filtered by folder: " + photoFolderFilter);
 }
 
 foreach (var folder in photoLibrary)
@@ -71,11 +98,12 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
         List<string> imageFiles = new List<string>();
 
-        int filesAdded = 0;
-        int filesDeleted = 0;
-        int filesUpdated = 0;
-        int filesSkipped = 0;
-        int filesError = 0;
+        // Define counters
+        int filesAdded      = 0;
+        int filesDeleted    = 0;
+        int filesUpdated    = 0;
+        int filesSkipped    = 0;
+        int filesError      = 0;
 
         // Define the file extensions to look for
         string[] fileExtensions = { ".jpg", ".jpeg", ".jxl", ".heic" };
@@ -467,27 +495,27 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             {
                 //Title
                 if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
-                { title = propertyXPTitle.GetString() ?? ""; }
+                { title = propertyXPTitle.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IPTC:Headline", out var propertyHeadline) && !string.IsNullOrWhiteSpace(propertyHeadline.GetString()))
-                { title = propertyHeadline.GetString() ?? ""; }
+                { title = propertyHeadline.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IPTC:ObjectName", out var propertyObjectName) && !string.IsNullOrWhiteSpace(propertyObjectName.GetString()))
-                { title = propertyObjectName.GetString() ?? ""; }
+                { title = propertyObjectName.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-dc:Title", out var propertyTitle) && !string.IsNullOrWhiteSpace(propertyTitle.GetString()))
-                { title = propertyTitle.GetString() ?? ""; }
+                { title = propertyTitle.GetString().Trim() ?? ""; }
 
-            //Description
+                //Description
                 if (doc.RootElement.TryGetProperty("IFD0:XPComment", out var propertyXPComment) && !string.IsNullOrWhiteSpace(propertyXPComment.GetString()))
-                { description = propertyXPComment.GetString() ?? ""; }
+                { description = propertyXPComment.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-tiff:ImageDescription", out var propertyTiffImageDescription) && !string.IsNullOrWhiteSpace(propertyTiffImageDescription.GetString()))
-                { description = propertyTiffImageDescription.GetString() ?? ""; }
+                { description = propertyTiffImageDescription.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("ExifIFD:UserComment", out var propertyUserComment) && !string.IsNullOrWhiteSpace(propertyUserComment.GetString()))
-                { description = propertyUserComment.GetString() ?? ""; }
+                { description = propertyUserComment.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IFD0:ImageDescription", out var propertyImageDescription) && !string.IsNullOrWhiteSpace(propertyImageDescription.GetString()))
-                { description = propertyImageDescription.GetString() ?? ""; }
+                { description = propertyImageDescription.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IPTC:Caption-Abstract", out var propertyCaptionAbstract) && !string.IsNullOrWhiteSpace(propertyCaptionAbstract.GetString()))
-                { description = propertyCaptionAbstract.GetString() ?? ""; }
+                { description = propertyCaptionAbstract.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-dc:Description", out var propertyDescription) && !string.IsNullOrWhiteSpace(propertyDescription.GetString()))
-                { description = propertyDescription.GetString() ?? ""; }
+                { description = propertyDescription.GetString().Trim() ?? ""; }
 
                 //Rating
                 if (doc.RootElement.TryGetProperty("XMP-xmp:Rating", out var propertyXMPRating) && !string.IsNullOrWhiteSpace(propertyXMPRating.GetString()))
@@ -503,6 +531,8 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; xmpDateTime = propertyDateTimeCreated.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
                 { dateTimeTaken = propertyPhotoshopDate.GetString() ?? ""; }
+                if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
+                { dateTimeTaken = propertyCreateDate.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
                 { dateTimeTaken = propertyDateTimeOriginal.GetString() ?? "";  }
 
@@ -543,69 +573,85 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             stringLongitude = doc.RootElement.TryGetProperty("GPS:GPSLongitude", out JsonElement propertyLongitude) && propertyLongitude.ValueKind == JsonValueKind.String ? propertyLongitude.GetString(): "";
             stringAltitude = doc.RootElement.TryGetProperty("GPS:GPSAltitude", out JsonElement propertyAltitude) && propertyAltitude.ValueKind == JsonValueKind.String ? propertyAltitude.GetString(): "";
 
-            latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
-            longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
-            altitude = string.IsNullOrWhiteSpace(stringAltitude) ? null : decimal.Parse(stringAltitude, CultureInfo.InvariantCulture);
+            try
+            {
+                latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
+                longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                latitude = null;
+                longitude = null;
+            }
+
+            try
+            {
+                altitude = string.IsNullOrWhiteSpace(stringAltitude) ? null : decimal.Parse(stringAltitude, CultureInfo.InvariantCulture);
+            }
+            catch 
+            {
+                altitude = null;
+            }
 
             // Get Location
             if (doc.RootElement.TryGetProperty("XMP-iptcCore:Location", out var propertyLocation) && !string.IsNullOrWhiteSpace(propertyLocation.GetString()))
-            { location = propertyLocation.GetString() ?? ""; }
+            { location = propertyLocation.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:Sub-location", out var propertySubLocation) && !string.IsNullOrWhiteSpace(propertySubLocation.GetString()))
-            { location = propertySubLocation.GetString() ?? ""; }
+            { location = propertySubLocation.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedSublocation", out var propertySubLocationCreated) && !string.IsNullOrWhiteSpace(propertySubLocationCreated.GetString()))
-            { location = propertySubLocationCreated.GetString() ?? ""; }
+            { location = propertySubLocationCreated.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedLocation", out var propertyLocationCreated) && !string.IsNullOrWhiteSpace(propertyLocationCreated.GetString()))
-            { location = propertyLocationCreated.GetString() ?? ""; }
+            { location = propertyLocationCreated.GetString().Trim() ?? ""; }
 
             // Get City
             if (doc.RootElement.TryGetProperty("XMP-photoshop:City", out var propertyPhotoshopCity) && !string.IsNullOrWhiteSpace(propertyPhotoshopCity.GetString()))
-            { city = propertyPhotoshopCity.GetString() ?? ""; }
+            { city = propertyPhotoshopCity.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:City", out var propertyCity) && !string.IsNullOrWhiteSpace(propertyCity.GetString()))
-            { city = propertyCity.GetString() ?? ""; }
+            { city = propertyCity.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCity", out var propertyLocationCreatedCity) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCity.GetString()))
-            { city = propertyLocationCreatedCity.GetString() ?? ""; }
+            { city = propertyLocationCreatedCity.GetString().Trim() ?? ""; }
 
             // Get State-Province
             if (doc.RootElement.TryGetProperty("XMP-photoshop:State", out var propertyPhotoshopState) && !string.IsNullOrWhiteSpace(propertyPhotoshopState.GetString()))
-            { stateProvince = propertyPhotoshopState.GetString() ?? ""; }
+            { stateProvince = propertyPhotoshopState.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:Province-State", out var propertyStateProvince) && !string.IsNullOrWhiteSpace(propertyStateProvince.GetString()))
-            { stateProvince = propertyStateProvince.GetString() ?? ""; }
+            { stateProvince = propertyStateProvince.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedProvinceState", out var propertyLocationCreatedStateProvince) && !string.IsNullOrWhiteSpace(propertyLocationCreatedStateProvince.GetString()))
-            { city = propertyLocationCreatedStateProvince.GetString() ?? ""; }
+            { city = propertyLocationCreatedStateProvince.GetString().Trim() ?? ""; }
 
             // Get Country
             if (doc.RootElement.TryGetProperty("XMP-photoshop:Country", out var propertyPhotoshopCountry) && !string.IsNullOrWhiteSpace(propertyPhotoshopCountry.GetString()))
-            { country = propertyPhotoshopCountry.GetString() ?? ""; }
+            { country = propertyPhotoshopCountry.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:Country-PrimaryLocationName", out var propertyCountry) && !string.IsNullOrWhiteSpace(propertyCountry.GetString()))
-            { country = propertyCountry.GetString() ?? ""; }
+            { country = propertyCountry.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCountryName", out var propertyLocationCreatedCountry) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountry.GetString()))
-            { country = propertyLocationCreatedCountry.GetString() ?? ""; }
+            { country = propertyLocationCreatedCountry.GetString().Trim() ?? ""; }
 
             // Get Country Code
             if (doc.RootElement.TryGetProperty("XMP-iptcCore:CountryCode", out var propertyCountryCode) && !string.IsNullOrWhiteSpace(propertyCountryCode.GetString()))
-            { countryCode = propertyCountryCode.GetString() ?? ""; }
+            { countryCode = propertyCountryCode.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:Country-PrimaryLocationCode", out var propertyIPTCCountryCode) && !string.IsNullOrWhiteSpace(propertyIPTCCountryCode.GetString()))
-            { countryCode = propertyIPTCCountryCode.GetString() ?? ""; }
+            { countryCode = propertyIPTCCountryCode.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCountryCode", out var propertyLocationCreatedCountryCode) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountryCode.GetString()))
-            { countryCode = propertyLocationCreatedCountryCode.GetString() ?? ""; }
+            { countryCode = propertyLocationCreatedCountryCode.GetString().Trim() ?? ""; }
 
             // Get Creator
             if (doc.RootElement.TryGetProperty("XMP-tiff:Artist", out var propertyTiffArtist) && !string.IsNullOrWhiteSpace(propertyTiffArtist.GetString()))
-            { creator = propertyTiffArtist.GetString() ?? ""; }
+            { creator = propertyTiffArtist.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("XMP-dc:Creator", out var propertyCreator) && !string.IsNullOrWhiteSpace(propertyCreator.GetString()))
-            { creator = propertyCreator.GetString() ?? ""; }
+            { creator = propertyCreator.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:By-line", out var propertyIPTCByLine) && !string.IsNullOrWhiteSpace(propertyIPTCByLine.GetString()))
-            { creator = propertyIPTCByLine.GetString() ?? ""; }
+            { creator = propertyIPTCByLine.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IFD0:Artist", out var propertyEXIFArtist) && !string.IsNullOrWhiteSpace(propertyEXIFArtist.GetString()))
-            { creator = propertyEXIFArtist.GetString() ?? ""; }
+            { creator = propertyEXIFArtist.GetString().Trim() ?? ""; }
 
             // Get Copyright
             if (doc.RootElement.TryGetProperty("XMP-dc:Rights", out var propertyRights) && !string.IsNullOrWhiteSpace(propertyRights.GetString()))
-            { copyright = propertyRights.GetString() ?? ""; }
+            { copyright = propertyRights.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IPTC:CopyrightNotice", out var propertyCopyrightNotice) && !string.IsNullOrWhiteSpace(propertyCopyrightNotice.GetString()))
-            { copyright = propertyCopyrightNotice.GetString() ?? ""; }
+            { copyright = propertyCopyrightNotice.GetString().Trim() ?? ""; }
             if (doc.RootElement.TryGetProperty("IFD0:Copyright", out var propertyCopyright) && !string.IsNullOrWhiteSpace(propertyCopyright.GetString()))
-            { copyright = propertyCopyright.GetString() ?? ""; }
+            { copyright = propertyCopyright.GetString().Trim() ?? ""; }
 
             // Check if the RegionPersonDisplayName property exists
             if (doc.RootElement.TryGetProperty("XMP-MP:RegionPersonDisplayName", out JsonElement regionPersonDisplayName))
@@ -960,7 +1006,8 @@ public static class DeviceHelper
         { "NEXTBASE", "Nextbase" },
         { "GARMIN", "Garmin" },
         { "PAPAGO", "Papago" },
-        { "VIOFO", "Viofo" }
+        { "VIOFO", "Viofo" },
+        { "MOTO", "Motorola" }
     };
 
     private static readonly Dictionary<string, string> SpecialFixes = new(StringComparer.OrdinalIgnoreCase)
@@ -970,7 +1017,21 @@ public static class DeviceHelper
         { "Konica Minolta Camera, Inc.", "Konica Minolta" },
         { "LG ELECTRONICS", "LG" },
         { "Minolta Co., Ltd.", "Minolta" },
-        { "NIKON CORPORATION", "Nikon" }
+        { "NIKON CORPORATION", "Nikon" },
+        { "CASIO COMPUTER CO.,LTD", "Casio" },
+        { "EASTMAN KODAK COMPANY", "Kodak" },
+        { "OLYMPUS CORPORATION", "Olympus" },
+        { "OLYMPUS IMAGING CORP.", "Olympus" },
+        { "OLYMPUS OPTICAL CO.,LTD", "Olympus" },
+        { "SAMSUNG TECHWIN CO., LTD.", "Samsung" },
+        { "SAMSUNG ELECTRONICS", "Samsung" },
+        { "SAMSUNG TECHWIN", "Samsung" },
+        { "SONY CORPORATION", "Sony" },
+        { "SONY INTERACTIVE ENTERTAINMENT", "Sony" },
+        { "SONY MOBILE COMMUNICATIONS INC.", "Sony" },
+        { "SONY MOBILE COMMUNICATIONS", "Sony" },
+        { "SONY ERICSSON MOBILE COMMUNICATIONS AB", "Sony Ericsson" },
+        { "PENTAX Corporation", "Pentax" }
     };
 
     public static string GetDevice(string deviceMake, string deviceModel)
