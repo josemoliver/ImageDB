@@ -26,6 +26,7 @@ using System.Text.Encodings.Web;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.CommandLine.NamingConventionBinder;
+using Microsoft.Extensions.Logging.Abstractions;
 
 var rootCommand = new RootCommand
 {
@@ -45,24 +46,21 @@ var photoLibrary = db.PhotoLibraries.ToList();
 string photoFolderFilter = string.Empty;
 bool reloadMetadata = false;
 
-//DEBUG VALUE
-//photoFolderFilter = "D:\\users\\jose\\Pictures\\Photos\\2024";
-
 
 // Handler to process the command-line arguments
 rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta) =>
 {
     photoFolderFilter = folder;
     
-    if (reloadmeta != null)
+    if ((reloadmeta != null) && (reloadmeta.ToLower() != "false"))
     {
         reloadMetadata = true;
-        Console.WriteLine("[START] - Reloading metadata");
+        Console.WriteLine("[START] - Reloading existing metadata, no new and update from files.");
     }
     else
     {
         reloadMetadata = false;
-        Console.WriteLine("[START] - Scanning new files");
+        Console.WriteLine("[START] - Scanning for new and updated files.");
     }    
     
     return Task.CompletedTask;
@@ -75,7 +73,7 @@ await rootCommand.InvokeAsync(args);
 if (string.IsNullOrEmpty(photoFolderFilter))
 {
     photoFolderFilter = "";
-    Console.WriteLine("[START] - No filter applied");
+    Console.WriteLine("[START] - No filter applied.");
 }
 else
 {
@@ -108,6 +106,24 @@ foreach (var folder in photoLibrary)
                 }
   
             }        
+    }
+}
+
+void LogEntry(int batchId, string filePath, string logEntry)
+{
+    using var dbFiles = new CDatabaseImageDBsqliteContext();
+    {
+        //Add entry to Log
+        var newLog = new Log
+        {
+            BatchId = batchId,
+            Filepath = filePath,
+            LogEntry = logEntry,
+            Datetime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+        };
+
+        dbFiles.Add(newLog);
+
     }
 }
 
@@ -200,6 +216,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 catch (Exception ex)
                 {
                     Console.WriteLine("[ERROR] - " + imageFiles[i]);
+                    LogEntry(batchID, imageFiles[i], ex.ToString());
                     Console.Write(ex.ToString());
                     filesError++;
                 }               
@@ -225,6 +242,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     catch (Exception ex)
                     {
                         Console.WriteLine("[ERROR] - " + imageFiles[i]);
+                        LogEntry(batchID, imageFiles[i], ex.ToString());
                         Console.Write(ex.ToString());
                         filesError++;
                     }
@@ -270,6 +288,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             catch (Exception ex)
             {
                 Console.WriteLine("[ERROR] - Failed to remove " + missingFile);
+                LogEntry(batchID, missingFile, ex.ToString());
                 Console.WriteLine(ex.ToString());
                 filesError++;
             }
@@ -1080,15 +1099,22 @@ public static class DeviceHelper
         { "SONY MOBILE COMMUNICATIONS INC.", "Sony" },
         { "SONY MOBILE COMMUNICATIONS", "Sony" },
         { "SONY ERICSSON MOBILE COMMUNICATIONS AB", "Sony Ericsson" },
-        { "PENTAX Corporation", "Pentax" }
+        { "PENTAX CORPORATION", "Pentax" }
     };
 
     public static string GetDevice(string deviceMake, string deviceModel)
     {
+        deviceMake = deviceMake.Trim();
+        deviceModel = deviceModel.Trim();
+
+        // If device model is empty, return the device make or an empty string
         if (string.IsNullOrWhiteSpace(deviceModel))
             return deviceMake ?? "";
 
+        // If device make is empty, return the device model
         deviceMake ??= "";
+
+        // Normalize the device make to uppercase for comparison
         string upperMake = deviceMake.ToUpperInvariant();
 
 

@@ -9,15 +9,11 @@ public partial class Log
 {
     public int LogEntryId { get; set; }
 
-    public int? BatchId { get; set; }
-
     public string Datetime { get; set; }
+
+    public int? BatchId { get; set; }
 
     public string Filepath { get; set; }
 
-    public string Sha1 { get; set; }
-
-    public int? Filesize { get; set; }
-
-    public string Operation { get; set; }
+    public string LogEntry { get; set; }
 }
