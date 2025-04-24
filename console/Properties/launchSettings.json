@@ -1,7 +1,8 @@
 {
   "profiles": {
     "ImageDB": {
-      "commandName": "Project"
+      "commandName": "Project",
+      "commandLineArgs": "--reloadmeta true"
     }
   }
 }

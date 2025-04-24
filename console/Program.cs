@@ -43,6 +43,7 @@ using var db = new CDatabaseImageDBsqliteContext();
 
 var photoLibrary = db.PhotoLibraries.ToList();
 string photoFolderFilter = string.Empty;
+bool reloadMetadata = false;
 
 //DEBUG VALUE
 //photoFolderFilter = "D:\\users\\jose\\Pictures\\Photos\\2024";
@@ -52,7 +53,18 @@ string photoFolderFilter = string.Empty;
 rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta) =>
 {
     photoFolderFilter = folder;
-
+    
+    if (reloadmeta != null)
+    {
+        reloadMetadata = true;
+        Console.WriteLine("[START] - Reloading metadata");
+    }
+    else
+    {
+        reloadMetadata = false;
+        Console.WriteLine("[START] - Scanning new files");
+    }    
+    
     return Task.CompletedTask;
 });
 
@@ -62,6 +74,7 @@ await rootCommand.InvokeAsync(args);
 
 if (string.IsNullOrEmpty(photoFolderFilter))
 {
+    photoFolderFilter = "";
     Console.WriteLine("[START] - No filter applied");
 }
 else
@@ -85,10 +98,35 @@ foreach (var folder in photoLibrary)
 
             if (photoLibraryId != 0)
             {
-                ScanFiles(photoFolder, photoLibraryId);
+                if (reloadMetadata == true)
+                {
+                    ReloadMetadata(photoLibraryId);
+                }
+                else
+                {
+                    ScanFiles(photoFolder, photoLibraryId);
+                }
+  
             }        
     }
 }
+
+void ReloadMetadata(int photoLibraryId)
+{
+    using var dbFiles = new CDatabaseImageDBsqliteContext();
+    {
+        var imagesdbTable = dbFiles.Images.ToList();
+        var imagesFromLibrary = imagesdbTable.Where(img => img.PhotoLibraryId == photoLibraryId).Select(img => img.ImageId).ToList();
+
+        foreach (var imageId in imagesFromLibrary)
+        {            
+            UpdateImageRecord(imageId, "");
+            Console.WriteLine("[UPDATE] - Reloading metadata for image Id: " + imageId);
+        }
+
+    }
+}
+
 
 void ScanFiles(string photoFolder, int photoLibraryId)
 {
@@ -267,8 +305,19 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 jobbatch.FilesReadError = filesError;
 
                 dbFilesUpdate.SaveChanges();
+
             }
-                      
+
+            // Delete orphaned relation records
+            string deleteTagQuery           = @"DELETE FROM relationTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationTag.ImageId);";
+            string deletePeopleTagQuery     = @"DELETE FROM relationPeopleTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationPeopleTag.ImageId);";
+            string deleteLocationTagQuery   = @"DELETE FROM relationLocation WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationLocation.ImageId);";
+
+            // Execute the raw SQL command
+            dbFiles.Database.ExecuteSqlRaw(deleteTagQuery);
+            dbFiles.Database.ExecuteSqlRaw(deletePeopleTagQuery);
+            dbFiles.Database.ExecuteSqlRaw(deleteLocationTagQuery);
+
 
             Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
             Console.WriteLine("[RESULTS] - Files Found: "+imageFiles.Count+" Added: " + filesAdded + " Updated: "+ filesUpdated+" Skipped: " + filesSkipped + " Removed: " + filesDeleted + " Error: " + filesError);
@@ -710,7 +759,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             }
 
             // Check if the Keyword property exists
-            if (doc.RootElement.TryGetProperty("Keywords", out JsonElement keywords))
+            if (doc.RootElement.TryGetProperty("IPTC:Keywords", out JsonElement keywords))
             {
                 // If it's a string
                 if (keywords.ValueKind == JsonValueKind.String)
@@ -728,7 +777,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             }
 
             // Check if the Keyword property exists
-            if (doc.RootElement.TryGetProperty("Subject", out JsonElement subject))
+            if (doc.RootElement.TryGetProperty("XMP-dc:Subject", out JsonElement subject))
             {
                 // If it's a string
                 if (subject.ValueKind == JsonValueKind.String)
@@ -746,7 +795,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             }
 
             // Check if the Location Identifiers exists
-            if (doc.RootElement.TryGetProperty("LocationCreatedLocationId", out JsonElement locationId))
+            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedLocationId", out JsonElement locationId))
             {
                     // If it's a string
                     if (locationId.ValueKind == JsonValueKind.String)
