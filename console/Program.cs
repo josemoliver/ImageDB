@@ -73,12 +73,12 @@ await rootCommand.InvokeAsync(args);
 if (string.IsNullOrEmpty(photoFolderFilter))
 {
     photoFolderFilter = "";
-    Console.WriteLine("[START] - No filter applied.");
+    Console.WriteLine("[INFO] - No filter applied.");
 }
 else
 {
     photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
-    Console.WriteLine("[START] - Filtered by folder: " + photoFolderFilter);
+    Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
 }
 
 foreach (var folder in photoLibrary)
@@ -146,6 +146,7 @@ void ReloadMetadata(int photoLibraryId)
 
 void ScanFiles(string photoFolder, int photoLibraryId)
 {
+    Console.WriteLine("[START] - Scanning folder for images: "+ photoFolder);
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
         var imagesdbTable = dbFiles.Images.ToList();
@@ -305,7 +306,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
             {
-                Thread.Sleep(100); // Wait and retry
+                Thread.Sleep(1000); // Wait and retry
             }
         }
 
@@ -378,13 +379,14 @@ async void UpdateImage(int imageId, string updatedSHA1)
         if (image != null)
         {
             specificFilePath = image.Filepath;
-            //string jsonMetadata = CheckExiftool(specificFilePath);
-            string jsonMetadata = ExifToolHelper.CheckExiftool(specificFilePath);
+            //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
+            string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
 
             if (jsonMetadata == "")
             {
                 // Handle the case where jsonMetadata is empty
                 Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
+                LogEntry(-1, specificFilePath, "No metadata found for the file");
                 return;
             }
 
@@ -412,7 +414,7 @@ async void UpdateImage(int imageId, string updatedSHA1)
                 }
                 catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
                 {
-                    Thread.Sleep(100); // Wait and retry
+                    Thread.Sleep(1000); // Wait and retry
                 }
             }
         }
@@ -423,8 +425,8 @@ async void UpdateImage(int imageId, string updatedSHA1)
 
 async void AddImage(int photoLibraryID, int batchId, string specificFilePath, string SHA1)
 {
-    //string jsonMetadata = CheckExiftool(specificFilePath);
-    string jsonMetadata = ExifToolHelper.CheckExiftool(specificFilePath);
+    //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
+    string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
 
     if (jsonMetadata == "")
     {
@@ -479,7 +481,7 @@ async void AddImage(int photoLibraryID, int batchId, string specificFilePath, st
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
             {
-                Thread.Sleep(100); // Wait and retry
+                Thread.Sleep(1000); // Wait and retry
             }
         }
           
@@ -550,7 +552,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
             {
-                Thread.Sleep(100); // Wait and retry
+                Thread.Sleep(1000); // Wait and retry
             }
         }
     }
@@ -895,7 +897,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                     }
                     catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
                     {
-                        Thread.Sleep(100); // Wait and retry
+                        Thread.Sleep(1000); // Wait and retry
                     }
                 }
             }
@@ -1174,13 +1176,17 @@ public static class ExifToolHelper
             }
         };
 
+        exiftoolProcess.StartInfo.EnvironmentVariables["LANG"] = "en_US.UTF-8";
         exiftoolProcess.Start();
         exiftoolInput = exiftoolProcess.StandardInput;
         exiftoolOutput = exiftoolProcess.StandardOutput;
     }
 
-    public static string CheckExiftool(string filepath)
+    public static string GetExiftoolMetadata(string filepath)
     {
+        // Normalize the file path
+        //filepath = Uri.EscapeDataString(filepath);
+
         lock (exiftoolLock)
         {
             try
