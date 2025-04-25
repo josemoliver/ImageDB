@@ -26,4 +26,8 @@ public partial class Batch
     public int? FilesRemoved { get; set; }
 
     public int? FilesReadError { get; set; }
+
+    public int? ElapsedTime { get; set; }
+
+    public string Comment { get; set; }
 }

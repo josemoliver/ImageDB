@@ -153,7 +153,7 @@ void ReloadMetadata(int photoLibraryId)
         foreach (var imageId in imagesFromLibrary)
         {            
             UpdateImageRecord(imageId, "");
-            Console.WriteLine("[UPDATE] - Reloading metadata for image Id: " + imageId);
+            Console.WriteLine("[UPDATE] - Reloading metadata for Image Id: " + imageId);
         }
 
     }
@@ -193,7 +193,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         // Iterate over each file and add them to imageFiles
         foreach (FileInfo file in files)
         {
-            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString()));         
+            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString(),file.Length.ToString(),file.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt")));         
         }
 
         // Start Batch entry get batch id
@@ -217,8 +217,8 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             string SHA1 = string.Empty;
             string imageSHA1 = string.Empty;
             string imagelastModifiedDate = string.Empty;
-            int imageId = 0;
             string specificFilePath = string.Empty;
+            int imageId = 0;
 
             // Get current file path
             specificFilePath = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.Filepath).FirstOrDefault() ?? "";
@@ -230,7 +230,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
-                    AddImage(photoLibraryId, batchID, imageFiles[i].FilePath, SHA1);
+                    AddImage(photoLibraryId, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
                     filesAdded++;
                 }
                 catch (Exception ex)
@@ -277,12 +277,12 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                         filesError++;
                     }
                 }
-                else if ((imagelastModifiedDate != imageFiles[i].LastModifiedDate)&&(quickScan==true))
+                else if ((imagelastModifiedDate != imageFiles[i].FileModifiedDate)&&(quickScan==true))
                 {
                     // File has been modified, update it
                     SHA1 = getFileSHA1(imageFiles[i].FilePath);
                     imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i]);
+                    Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
                         UpdateImage(imageId, SHA1);
@@ -388,19 +388,6 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         {
             var jobbatch = dbFilesUpdate.Batches.FirstOrDefault(batch => batch.BatchId == batchID);
 
-            if (jobbatch != null)
-            {
-                jobbatch.EndDateTime    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-                jobbatch.FilesUpdated   = filesUpdated;
-                jobbatch.FilesAdded     = filesAdded;
-                jobbatch.FilesSkipped   = filesSkipped;
-                jobbatch.FilesRemoved   = filesDeleted;
-                jobbatch.FilesReadError = filesError;
-
-                dbFilesUpdate.SaveChanges();
-
-            }
-
             // Delete orphaned relation records
             string deleteTagQuery           = @"DELETE FROM relationTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationTag.ImageId);";
             string deletePeopleTagQuery     = @"DELETE FROM relationPeopleTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationPeopleTag.ImageId);";
@@ -411,30 +398,58 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             dbFiles.Database.ExecuteSqlRaw(deletePeopleTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteLocationTagQuery);
 
-
             Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
             Console.WriteLine("[RESULTS] - Files Found: "+imageFiles.Count+" Added: " + filesAdded + " Updated: "+ filesUpdated+" Skipped: " + filesSkipped + " Removed: " + filesDeleted + " Error: " + filesError);
 
             // Get elapsed time in seconds
             int elapsedTime = (int)(DateTime.Parse(jobbatch.EndDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds;
-
+            string elapsedTimeComment = "";
             if (elapsedTime >= 3600) // Greater than or equal to 1 hour
             {
-                int hours = elapsedTime / 3600;
-                int minutes = (elapsedTime % 3600) / 60;
-                Console.WriteLine($"Elapsed Time: {hours} hour(s) and {minutes} minute(s)");
+                int hours           = elapsedTime / 3600;
+                int minutes         = (elapsedTime % 3600) / 60;
+                elapsedTimeComment  = $"{hours} hour(s) and {minutes} minute(s)";
+                Console.WriteLine($"Elapsed Time: "+ elapsedTimeComment);
             }
             else if (elapsedTime >= 60) // Greater than or equal to 1 minute
             {
-                int minutes = elapsedTime / 60;
-                int seconds = elapsedTime % 60;
-                Console.WriteLine($"Elapsed Time: {minutes} minute(s) and {seconds} second(s)");
+                int minutes         = elapsedTime / 60;
+                int seconds         = elapsedTime % 60;
+                elapsedTimeComment  = $"{minutes} minute(s) and {seconds} second(s)";
+                Console.WriteLine($"Elapsed Time: " +elapsedTimeComment);
             }
             else // Less than 1 minute
             {
-                Console.WriteLine($"Elapsed Time: {elapsedTime} second(s)");
+                elapsedTimeComment  = $"{elapsedTime} second(s)";
+                Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
 
+            if (jobbatch != null)
+            {
+                jobbatch.EndDateTime    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                jobbatch.FilesUpdated   = filesUpdated;
+                jobbatch.FilesAdded     = filesAdded;
+                jobbatch.FilesSkipped   = filesSkipped;
+                jobbatch.FilesRemoved   = filesDeleted;
+                jobbatch.FilesReadError = filesError;
+                jobbatch.ElapsedTime    = elapsedTime;
+                jobbatch.Comment        = elapsedTimeComment;
+
+                // Save changes to the database
+                retryCount = 5;
+                while (retryCount-- > 0)
+                {
+                    try
+                    {
+                        dbFilesUpdate.SaveChanges();
+                        break;
+                    }
+                    catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+                    {
+                        Thread.Sleep(1000); // Wait and retry
+                    }
+                }
+            }
         }
 
     }
@@ -464,17 +479,17 @@ async void UpdateImage(int imageId, string updatedSHA1)
             }
 
             // Get the file size and creation/modification dates
-            FileInfo fileInfo = new FileInfo(specificFilePath);
-            long fileSize = fileInfo.Length;
-            string fileDateCreated = fileInfo.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt");
+            FileInfo fileInfo       = new FileInfo(specificFilePath);
+            long fileSize           = fileInfo.Length;
+            string fileDateCreated  = fileInfo.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt");
             string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt");
 
             // Update the fields with new values
-            image.Filesize = fileSize.ToString();
-            image.FileCreatedDate = fileDateCreated;
-            image.FileModifiedDate = fileDateModified;
-            image.Metadata = jsonMetadata;
-            image.RecordModified = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
+            image.Filesize          = fileSize.ToString();
+            image.FileCreatedDate   = fileDateCreated;
+            image.FileModifiedDate  = fileDateModified;
+            image.Metadata          = jsonMetadata;
+            image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
 
             // Save changes to the database
             int retryCount = 5;
@@ -496,7 +511,7 @@ async void UpdateImage(int imageId, string updatedSHA1)
     UpdateImageRecord(imageId, updatedSHA1);
 }
 
-async void AddImage(int photoLibraryID, int batchId, string specificFilePath, string SHA1)
+async void AddImage(int photoLibraryID, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
 {
     //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
     string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
@@ -508,38 +523,40 @@ async void AddImage(int photoLibraryID, int batchId, string specificFilePath, st
         return;
     }
 
-    // Deserialize the JSON string into a dynamic object
-    FileInfo fileInfo = new FileInfo(specificFilePath);
-        long fileSize = fileInfo.Length;
-        int imageId = 0;
-        string fileExtension = fileInfo.Extension.ToLower();
-        string fileName = fileInfo.Name;
-        string fileDateCreated = fileInfo.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt");
-        string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt");
-        string recordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
+    int imageId = 0;
+    string recordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
+
+    // Dictionary to map file extensions to normalized values
+    var extensionMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "jpg", "jpeg" },
+        { "jpeg", "jpeg" },
+        { "jxl", "jpeg-xl" },
+        { "heic", "heic" }
+    };
 
     // Normalize the file extension
-    fileExtension = fileExtension.Replace(".", "");
-    if (fileExtension == "jpg") { fileExtension = "jpeg"; }
-    if (fileExtension == "jpeg") { fileExtension = "jpeg"; }
-    if (fileExtension == "jxl") { fileExtension = "jpeg-xl"; }
-    if (fileExtension == "heic") { fileExtension = "heic"; }
+    fileExtension = fileExtension.Replace(".", "").ToLowerInvariant();
+    if (extensionMap.TryGetValue(fileExtension, out string normalizedExtension))
+    {
+        fileExtension = normalizedExtension;
+    }
 
     // Add the new image to the database
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
         var newImage = new ImageDB.Models.Image
         {
-            PhotoLibraryId = photoLibraryID,
-            BatchId = batchId,           
-            Filepath = specificFilePath,
-            Filename = fileName,
-            Format = fileExtension,
-            Filesize = fileSize.ToString(),
-            FileCreatedDate = fileDateCreated,
-            FileModifiedDate = fileDateModified,
-            Metadata = jsonMetadata,
-            RecordAdded = recordAdded
+            PhotoLibraryId  = photoLibraryID,
+            BatchId         = batchId,           
+            Filepath        = specificFilePath,
+            
+            Filename        = fileName,
+            Format          = fileExtension,
+            Filesize        = fileSize.ToString(),
+           
+            Metadata        = jsonMetadata,
+            RecordAdded     = recordAdded
         };
 
         dbFiles.Add(newImage);
@@ -567,7 +584,8 @@ async void AddImage(int photoLibraryID, int batchId, string specificFilePath, st
 
 async void UpdateImageRecord(int imageID, string updatedSHA1)
 {
-    // Initialize variables for metadata extraction
+
+        // Initialize variables for metadata extraction
         string jsonMetadata;
         string title                    = "";
         string description              = "";
@@ -584,26 +602,33 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
         string countryCode              = "";
         string creator                  = "";
         string copyright                = "";
+        string fileCreatedDate          = "";
+        string fileModifiedDate         = "";
 
-        string stringLatitude = "";
-        string stringLongitude = "";
-        string stringAltitude = "";
+        string stringLatitude           = "";
+        string stringLongitude          = "";
+        string stringAltitude           = "";
 
         decimal? latitude;
         decimal? longitude;
         decimal? altitude;
 
-        HashSet<string> peopleTag = new HashSet<string>();
-        HashSet<string> descriptiveTag = new HashSet<string>();
-        HashSet<string> locationIdentifier = new HashSet<string>();
+        HashSet<string> peopleTag           = new HashSet<string>();
+        HashSet<string> descriptiveTag      = new HashSet<string>();
+        HashSet<string> locationIdentifier  = new HashSet<string>();
 
     //Get metadata from db
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
         jsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.Metadata).FirstOrDefault() ?? "";
+ 
+        //Delete record PeopleTags from db
+        bool tagsFound = false;
+
         var relationPeopleTag = await dbFiles.RelationPeopleTags.FirstOrDefaultAsync(i => i.ImageId == imageID);
         if (relationPeopleTag != null)
         {
+            tagsFound = true;
             dbFiles.RelationPeopleTags.Remove(relationPeopleTag);
         }
 
@@ -611,21 +636,25 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
 
         if (relationTag != null)
         {
+            tagsFound = true;
             dbFiles.RelationTags.Remove(entity: relationTag);
         }
 
-        int retryCount = 5;
-
-        while (retryCount-- > 0)
+        if (tagsFound == true)
         {
-            try
+            int retryCount = 5;
+
+            while (retryCount-- > 0)
             {
-                dbFiles.SaveChanges();
-                break;
-            }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-            {
-                Thread.Sleep(1000); // Wait and retry
+                try
+                {
+                    dbFiles.SaveChanges();
+                    break;
+                }
+                catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+                {
+                    Thread.Sleep(1000); // Wait and retry
+                }
             }
         }
     }
@@ -636,8 +665,15 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
         // Parse the JSON string dynamically into a JsonDocument
         using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
             {
-                //Title
-                if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
+            //File Properties
+                if (doc.RootElement.TryGetProperty("System:FileCreateDate", out var propertyFileDateCreated) && !string.IsNullOrWhiteSpace(propertyFileDateCreated.GetString()))
+                { fileCreatedDate = propertyFileDateCreated.GetString().Trim() ?? ""; }
+                if (doc.RootElement.TryGetProperty("System:FileModifyDate", out var propertyFileDateModified) && !string.IsNullOrWhiteSpace(propertyFileDateModified.GetString()))
+                { fileModifiedDate = propertyFileDateModified.GetString().Trim() ?? ""; }
+
+
+            //Title
+            if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
                 { title = propertyXPTitle.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IPTC:Headline", out var propertyHeadline) && !string.IsNullOrWhiteSpace(propertyHeadline.GetString()))
                 { title = propertyHeadline.GetString().Trim() ?? ""; }
@@ -668,8 +704,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
 
                 // Get DateTimeTaken
                 string xmpDateTime = "";
-                if (doc.RootElement.TryGetProperty("System:FileCreateDate", out var propertyFileDateCreated) && !string.IsNullOrWhiteSpace(propertyFileDateCreated.GetString()))
-                { dateTimeTaken = propertyFileDateCreated.GetString() ?? ""; }
+                dateTimeTaken = fileCreatedDate;
                 if (doc.RootElement.TryGetProperty("Composite:DateTimeCreated", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
                 { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; xmpDateTime = propertyDateTimeCreated.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
@@ -705,6 +740,9 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 dateTimeTaken = ConvertDateToNewFormat(dateTimeTaken);              
             }
 
+            // Format file datetime to desired format
+            fileCreatedDate = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
+            fileModifiedDate = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
 
             // Get Device Make
             deviceMake = doc.RootElement.TryGetProperty("IFD0:Make", out JsonElement propertyDeviceMake) ? propertyDeviceMake.GetString() : "";
@@ -888,6 +926,24 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 }
             }
 
+            // Check if the Keyword property exists
+            if (doc.RootElement.TryGetProperty("IFD0:XPKeywords", out JsonElement xpKeywords))
+            {
+                // If it's a string
+                if (xpKeywords.ValueKind == JsonValueKind.String)
+                {
+                    descriptiveTag.Add(item: xpKeywords.GetString());
+                }
+                else
+                {
+                    // Iterate over the array
+                    foreach (var tag in xpKeywords.EnumerateArray())
+                    {
+                        descriptiveTag.Add(item: tag.GetString());
+                    }
+                }
+            }
+
             // Check if the Location Identifiers exists
             if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedLocationId", out JsonElement locationId))
             {
@@ -937,26 +993,29 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 if (image != null)
                 {
                 // Update the Date field (assuming Date is a DateTime property)
-                image.Title = title;
-                image.Description = description;
-                image.Rating = rating;
-                image.DateTimeTaken = dateTimeTaken;
-                image.DateTimeTakenTimeZone = dateTimeTakenTimeZone;
-                image.Device = device;
-                image.Latitude = latitude;
-                image.Longitude = longitude;
-                image.Altitude = altitude;
-                image.Location = location;
-                image.City = city; 
-                image.StateProvince = stateProvince;
-                image.Country = country;
-                image.CountryCode = countryCode;
-                image.Creator = creator;
-                image.Copyright = copyright;
+                image.Title                     = title;
+                image.Description               = description;
+                image.Rating                    = rating;
+                image.DateTimeTaken             = dateTimeTaken;
+                image.DateTimeTakenTimeZone     = dateTimeTakenTimeZone;
+                image.Device                    = device;
+                image.Latitude                  = latitude;
+                image.Longitude                 = longitude;
+                image.Altitude                  = altitude;
+                image.Location                  = location;
+                image.City                      = city; 
+                image.StateProvince             = stateProvince;
+                image.Country                   = country;
+                image.CountryCode               = countryCode;
+                image.Creator                   = creator;
+                image.Copyright                 = copyright;
+                image.FileCreatedDate           = fileCreatedDate;
+                image.FileModifiedDate          = fileModifiedDate;
 
+                // Update the file path and other properties only when necessary. Not needed when perfoming a metadata reload.
                 if (updatedSHA1 != "")
                 {
-                    image.Sha1 = updatedSHA1;
+                    image.Sha1 = updatedSHA1;                 
                 }
 
                 // Save the changes to the database
@@ -973,13 +1032,12 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                         Thread.Sleep(1000); // Wait and retry
                     }
                 }
-            }
-            }     
-
-    
+            
+                }
+            }  
+           
     }
-
-    
+        
 }
 
 static string ConvertDateToNewFormat(string inputDate)
@@ -1253,12 +1311,12 @@ public static class ExifToolHelper
         exiftoolProcess.Start();
         exiftoolInput = exiftoolProcess.StandardInput;
         exiftoolOutput = exiftoolProcess.StandardOutput;
+
+        Console.WriteLine("[EXIFTOOL] - Exiftool Process Started");
     }
 
     public static string GetExiftoolMetadata(string filepath)
     {
-        // Normalize the file path
-        //filepath = Uri.EscapeDataString(filepath);
 
         lock (exiftoolLock)
         {
@@ -1292,15 +1350,17 @@ public static class ExifToolHelper
 
                 string result = outputBuilder.ToString().Trim();
 
-                //Console.WriteLine("JSON:\n" + result);
 
+
+                // This is a workaround for Exiftool which adds the array brackets as well as sometimes changes the datatype of the values. All values will be returning as text.
                 result = result.Trim('[', ']');
                 result = JsonConverter.ConvertNumericAndBooleanValuesToString(result);
+
                 return result; // clean up array brackets
             }
             catch (Exception ex)
             {
-                Console.WriteLine("EXCEPTION: " + ex.Message);
+                Console.WriteLine("[EXCEPTION] - " + ex.Message);
                 return string.Empty;
             }
         }
@@ -1310,16 +1370,20 @@ public static class ExifToolHelper
 public class ImageFile
 {
     public string FilePath { get; set; }
-    public string LastModifiedDate { get; set; }
+    public string FileModifiedDate { get; set; }
     public string FileExtension { get; set; }
     public string FileName { get; set; }
+    public string FileSize { get; set; }
+    public string FileCreatedDate { get; set; }
 
-    public ImageFile(string filePath, string lastModifiedDate, string fileExtension, string fileName)
+    public ImageFile(string filePath, string fileModifiedDate, string fileExtension, string fileName, string fileSize, string fileCreatedDate)
     {
         FilePath = filePath;
-        LastModifiedDate = lastModifiedDate;
+        FileModifiedDate = fileModifiedDate;
         FileExtension = fileExtension;
         FileName = fileName;
+        FileSize = fileSize;
+        FileCreatedDate = fileCreatedDate;
     }
 }
 

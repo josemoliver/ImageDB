@@ -2,7 +2,7 @@
   "profiles": {
     "ImageDB": {
       "commandName": "Project",
-      "commandLineArgs": "--reloadmeta false --quickscan true --folder \"D:\\users\\jose\\Pictures\\Photos\\2018\""
+      "commandLineArgs": "--reloadmeta false --folder \"D:\\Users\\Jose\\Pictures\\Photos\\2021\" --quickscan true"
     }
   }
 }
