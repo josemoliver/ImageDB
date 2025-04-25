@@ -37,7 +37,11 @@ var rootCommand = new RootCommand
     new Option<string>(
         "--reloadmeta",
         description: "Re-process already scanned metatada."
-    )
+    ),
+        new Option<string>(
+        "--quickscan",
+        description: "Scan for changes using file modified date."
+        )
 };
 
 using var db = new CDatabaseImageDBsqliteContext();
@@ -45,10 +49,11 @@ using var db = new CDatabaseImageDBsqliteContext();
 var photoLibrary = db.PhotoLibraries.ToList();
 string photoFolderFilter = string.Empty;
 bool reloadMetadata = false;
+bool quickScan = false;
 
 
 // Handler to process the command-line arguments
-rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta) =>
+rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, string quickscan) =>
 {
     photoFolderFilter = folder;
     
@@ -61,8 +66,19 @@ rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta) =
     {
         reloadMetadata = false;
         Console.WriteLine("[START] - Scanning for new and updated files.");
-    }    
-    
+    }
+
+    if ((quickscan != null) && (quickscan.ToLower() != "false"))
+    {
+        quickScan = true;
+        Console.WriteLine("[START] - Quick scan for changes using file modified date.");
+    }
+    else
+    {
+        quickScan = false;
+        Console.WriteLine("[START] - Integrity scan for new and updated files.");
+    }
+
     return Task.CompletedTask;
 });
 
@@ -151,8 +167,10 @@ void ScanFiles(string photoFolder, int photoLibraryId)
     {
         var imagesdbTable = dbFiles.Images.ToList();
 
-        List<string> imageFiles = new List<string>();
-
+        //List<string> imageFiles = new List<string>();
+        List<ImageFile> imageFiles = new List<ImageFile>();
+        
+        
         // Define counters
         int filesAdded      = 0;
         int filesDeleted    = 0;
@@ -161,21 +179,21 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         int filesError      = 0;
 
         // Define the file extensions to look for
+
+
+        // Get all supported files in the directory and subdirectories
+        DirectoryInfo info = new DirectoryInfo(photoFolder);
         string[] fileExtensions = { ".jpg", ".jpeg", ".jxl", ".heic" };
 
-        // Get all files in the directory and subdirectories
-        DirectoryInfo info = new DirectoryInfo(photoFolder);
-        FileInfo[] files = info.GetFiles("*.*", SearchOption.AllDirectories).OrderByDescending(p => p.LastWriteTime).ToArray();
+        FileInfo[] files = info.GetFiles("*.*", SearchOption.AllDirectories)
+            .Where(p => fileExtensions.Contains(p.Extension.ToLower()))
+            .OrderByDescending(p => p.LastWriteTime)
+            .ToArray();
 
-        // Iterate over each file
+        // Iterate over each file and add them to imageFiles
         foreach (FileInfo file in files)
         {
-            string fileExtension = file.Extension.ToLower();
-
-            if (fileExtensions.Contains(fileExtension))
-            {               
-                imageFiles.Add(file.FullName);
-            }
+            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString()));         
         }
 
         // Start Batch entry get batch id
@@ -198,26 +216,27 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         {
             string SHA1 = string.Empty;
             string imageSHA1 = string.Empty;
+            string imagelastModifiedDate = string.Empty;
             int imageId = 0;
             string specificFilePath = string.Empty;
 
             // Get current file path
-            specificFilePath = imagesdbTable.Where(img => img.Filepath == imageFiles[i]).Select(img => img.Filepath).FirstOrDefault() ?? "";
+            specificFilePath = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.Filepath).FirstOrDefault() ?? "";
 
             if (specificFilePath == "")
             {
                 // File was not found in db, add it
-                SHA1 = getFileSHA1(imageFiles[i]);        
-                Console.WriteLine("[ADD] - " + imageFiles[i]);
+                SHA1 = getFileSHA1(imageFiles[i].FilePath);        
+                Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
-                    AddImage(photoLibraryId, batchID, imageFiles[i], SHA1);
+                    AddImage(photoLibraryId, batchID, imageFiles[i].FilePath, SHA1);
                     filesAdded++;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("[ERROR] - " + imageFiles[i]);
-                    LogEntry(batchID, imageFiles[i], ex.ToString());
+                    Console.WriteLine("[ERROR] - " + imageFiles[i].FilePath);
+                    LogEntry(batchID, imageFiles[i].FilePath, ex.ToString());
                     Console.Write(ex.ToString());
                     filesError++;
                 }               
@@ -226,14 +245,43 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             else
             {
                 //Check if file has been modified
-                SHA1 = getFileSHA1(imageFiles[i]);
-                imageSHA1 = imagesdbTable.Where(img => img.Filepath == imageFiles[i]).Select(img => img.Sha1).FirstOrDefault() ?? "";
-                imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i]).Select(img => img.ImageId).FirstOrDefault();
+
+                if (quickScan == false)
+                {
+                    SHA1 = getFileSHA1(imageFiles[i].FilePath);
+                    imageSHA1 = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.Sha1).FirstOrDefault() ?? "";
+                }
+                else
+                {
+                    imagelastModifiedDate = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.FileModifiedDate).FirstOrDefault() ?? "";
+                }
+
+
 
                 // Check if the SHA1 hash is different
-                if (SHA1!=imageSHA1)
+                if ((SHA1!=imageSHA1)&&(quickScan==false))
                 {
                     // File has been modified, update it
+                    imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
+                    Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
+                    try
+                    {
+                        UpdateImage(imageId, SHA1);
+                        filesUpdated++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("[ERROR] - " + imageFiles[i].FilePath);
+                        LogEntry(batchID, imageFiles[i].FilePath, ex.ToString());
+                        Console.Write(ex.ToString());
+                        filesError++;
+                    }
+                }
+                else if ((imagelastModifiedDate != imageFiles[i].LastModifiedDate)&&(quickScan==true))
+                {
+                    // File has been modified, update it
+                    SHA1 = getFileSHA1(imageFiles[i].FilePath);
+                    imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
                     Console.WriteLine("[UPDATE] - " + imageFiles[i]);
                     try
                     {
@@ -242,16 +290,34 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("[ERROR] - " + imageFiles[i]);
-                        LogEntry(batchID, imageFiles[i], ex.ToString());
+                        Console.WriteLine("[ERROR] - " + imageFiles[i].FilePath);
+                        LogEntry(batchID, imageFiles[i].FilePath, ex.ToString());
                         Console.Write(ex.ToString());
                         filesError++;
                     }
-                    
+                }
+                else if (reloadMetadata == true)
+                {
+                    // File has been modified, update it
+                    imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
+                    Console.WriteLine("[UPDATE] - " + imageFiles[i]);
+                    try
+                    {
+                        UpdateImage(imageId, SHA1);
+                        filesUpdated++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("[ERROR] - " + imageFiles[i].FilePath);
+                        LogEntry(batchID, imageFiles[i].FilePath, ex.ToString());
+                        Console.Write(ex.ToString());
+                        filesError++;
+                    }
+
                 }
                 else
                 {
-                    Console.WriteLine("[SKIP] - " + imageFiles[i]);
+                    Console.WriteLine("[SKIP] - " + imageFiles[i].FilePath);
                     filesSkipped++;
                 }
             }
@@ -266,7 +332,14 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Get the list of file paths from the current folder
-        var folderFilePaths = imageFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        List<string> compareImageFiles = new List<string>();
+
+        foreach (var imageFile in imageFiles)
+        {
+            compareImageFiles.Add(imageFile.FilePath);
+        }
+        var folderFilePaths = compareImageFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Find files that are in the database but not in the current folder
         var missingFiles = dbFilePaths.Except(folderFilePaths).ToList();
@@ -1232,6 +1305,22 @@ public static class ExifToolHelper
             }
         }
     } 
+}
+
+public class ImageFile
+{
+    public string FilePath { get; set; }
+    public string LastModifiedDate { get; set; }
+    public string FileExtension { get; set; }
+    public string FileName { get; set; }
+
+    public ImageFile(string filePath, string lastModifiedDate, string fileExtension, string fileName)
+    {
+        FilePath = filePath;
+        LastModifiedDate = lastModifiedDate;
+        FileExtension = fileExtension;
+        FileName = fileName;
+    }
 }
 
 
