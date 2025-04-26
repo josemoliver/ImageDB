@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 
 namespace ImageDB.Models;
 
@@ -39,19 +38,8 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
     public virtual DbSet<Tag> Tags { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        // Use ConfigurationBuilder to load appsettings.json
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())  // Set the base path to the current directory
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true) // Add the JSON file
-            .Build();
-
-        // Retrieve the connection string from the configuration
-        var connectionString = configuration.GetConnectionString("ImageDBConnectionString");
-
-        // Use the connection string with Sqlite
-        optionsBuilder.UseSqlite(connectionString);
-    }
+#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
+        => optionsBuilder.UseSqlite("Data Source=C:\\Database\\ImageDB.sqlite");
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -36,11 +36,11 @@ var rootCommand = new RootCommand
     ),
     new Option<string>(
         "--reloadmeta",
-        description: "Re-process already scanned metatada."
+        description: "Re-process already scanned metatada. Ignore any file updates."
     ),
         new Option<string>(
-        "--quickscan",
-        description: "Scan for changes using file modified date."
+        "--scanmode",
+        description: "Set scan modes: normal (default) | date | quick"
         )
 };
 
@@ -50,10 +50,10 @@ var photoLibrary = db.PhotoLibraries.ToList();
 string photoFolderFilter = string.Empty;
 bool reloadMetadata = false;
 bool quickScan = false;
-
+bool dateScan = false;
 
 // Handler to process the command-line arguments
-rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, string quickscan) =>
+rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, string scanmode) =>
 {
     photoFolderFilter = folder;
     
@@ -68,15 +68,22 @@ rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, s
         Console.WriteLine("[START] - Scanning for new and updated files.");
     }
 
-    if ((quickscan != null) && (quickscan.ToLower() != "false"))
-    {
-        quickScan = true;
-        Console.WriteLine("[START] - Quick scan for changes using file modified date.");
-    }
-    else
+    if ((scanmode == null) || (scanmode.ToLower() == "normal"))
     {
         quickScan = false;
         Console.WriteLine("[START] - Integrity scan for new and updated files.");
+    }
+    else if (scanmode.ToLower() == "date")
+    {
+        dateScan = true;
+        quickScan = false;
+        Console.WriteLine("[START] - Scan for changes using file modified date.");        
+    }
+    else if (scanmode.ToLower() == "quick")
+    {
+        dateScan = true;
+        quickScan = true;
+        Console.WriteLine("[START] - Quick scan for changes using file modified date.");
     }
 
     return Task.CompletedTask;
@@ -93,6 +100,7 @@ if (string.IsNullOrEmpty(photoFolderFilter))
 }
 else
 {
+    photoFolderFilter = photoFolderFilter.Trim('\\');
     photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
     Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
 }
@@ -208,12 +216,17 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         dbFiles.Add(newBatch);
         dbFiles.SaveChanges();
         int batchID = newBatch.BatchId;
-
+        bool suspendScan = false;
         Console.WriteLine("[BATCH] - Started batch Id: " + batchID+" Files Found: "+imageFiles.Count);
 
         // Iterate over each image file
         for (int i = 0; i < imageFiles.Count; i++)
         {
+            if (suspendScan == true)
+            {
+                break;
+            }
+
             string SHA1 = string.Empty;
             string imageSHA1 = string.Empty;
             string imagelastModifiedDate = string.Empty;
@@ -230,7 +243,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
-                    AddImage(photoLibraryId, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
+                    AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
                     filesAdded++;
                 }
                 catch (Exception ex)
@@ -246,7 +259,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             {
                 //Check if file has been modified
 
-                if (quickScan == false)
+                if (dateScan == false)
                 {
                     SHA1 = getFileSHA1(imageFiles[i].FilePath);
                     imageSHA1 = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.Sha1).FirstOrDefault() ?? "";
@@ -259,7 +272,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
 
                 // Check if the SHA1 hash is different
-                if ((SHA1!=imageSHA1)&&(quickScan==false))
+                if ((SHA1!=imageSHA1)&&(dateScan == false))
                 {
                     // File has been modified, update it
                     imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
@@ -277,14 +290,15 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                         filesError++;
                     }
                 }
-                else if ((imagelastModifiedDate != imageFiles[i].FileModifiedDate)&&(quickScan==true))
+                else if ((imagelastModifiedDate != imageFiles[i].FileModifiedDate)&&(dateScan == true))
                 {
                     // File has been modified, update it
                     SHA1 = getFileSHA1(imageFiles[i].FilePath);
                     imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
                     Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
-                    {
+                    {   
+                        // Update file record
                         UpdateImage(imageId, SHA1);
                         filesUpdated++;
                     }
@@ -303,6 +317,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     Console.WriteLine("[UPDATE] - " + imageFiles[i]);
                     try
                     {
+                        // Update file record
                         UpdateImage(imageId, SHA1);
                         filesUpdated++;
                     }
@@ -316,9 +331,20 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
                 }
                 else
-                {
-                    Console.WriteLine("[SKIP] - " + imageFiles[i].FilePath);
-                    filesSkipped++;
+                {   // File is unchanged                 
+                    // Check if quick scan is enabled
+                    if (quickScan == true)
+                    {   
+                        // Quick scan, skip the rest of the files
+                        suspendScan = true;
+                        filesSkipped = imageFiles.Count - i;
+                    }
+                    else
+                    {
+                        // File is unchanged, skip it
+                        Console.WriteLine("[SKIP] - " + imageFiles[i].FilePath);
+                        filesSkipped++;
+                    }
                 }
             }
 
@@ -402,7 +428,9 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             Console.WriteLine("[RESULTS] - Files Found: "+imageFiles.Count+" Added: " + filesAdded + " Updated: "+ filesUpdated+" Skipped: " + filesSkipped + " Removed: " + filesDeleted + " Error: " + filesError);
 
             // Get elapsed time in seconds
-            int elapsedTime = (int)(DateTime.Parse(jobbatch.EndDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds;
+            int elapsedTime = 0;
+            try { elapsedTime = (int)(DateTime.Parse(jobbatch.EndDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
+
             string elapsedTimeComment = "";
             if (elapsedTime >= 3600) // Greater than or equal to 1 hour
             {
@@ -511,7 +539,7 @@ async void UpdateImage(int imageId, string updatedSHA1)
     UpdateImageRecord(imageId, updatedSHA1);
 }
 
-async void AddImage(int photoLibraryID, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
+async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
 {
     //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
     string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
@@ -550,7 +578,8 @@ async void AddImage(int photoLibraryID, int batchId, string specificFilePath, st
             PhotoLibraryId  = photoLibraryID,
             BatchId         = batchId,           
             Filepath        = specificFilePath,
-            
+            Album           = GetAlbumName(photoFolder,specificFilePath.Replace(fileName,"")),
+
             Filename        = fileName,
             Format          = fileExtension,
             Filesize        = fileSize.ToString(),
@@ -584,7 +613,6 @@ async void AddImage(int photoLibraryID, int batchId, string specificFilePath, st
 
 async void UpdateImageRecord(int imageID, string updatedSHA1)
 {
-
         // Initialize variables for metadata extraction
         string jsonMetadata;
         string title                    = "";
@@ -621,7 +649,8 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
         jsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.Metadata).FirstOrDefault() ?? "";
- 
+     
+
         //Delete record PeopleTags from db
         bool tagsFound = false;
 
@@ -966,7 +995,6 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 foreach (var name in peopleTag)
                 {
                     var service = new PeopleTagService(dbFiles);
-
                     await service.AddPeopleTags(name, imageID);
                 }
 
@@ -974,7 +1002,6 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 foreach (var tag in descriptiveTag)
                 {
                     var service = new DescriptiveTagService(dbFiles);
-
                     await service.AddTags(tag, imageID);
                 }
 
@@ -1057,6 +1084,13 @@ static string ConvertDateToNewFormat(string inputDate)
     }
 }
 
+static string GetAlbumName(string photoLibrary, string filePath)
+{
+    filePath = filePath.Replace(photoLibrary, "");
+    filePath = filePath.Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    filePath = filePath.Replace(Path.DirectorySeparatorChar.ToString(), " - ");
+    return filePath;
+}
 static string FormatTimezone(string input)
 {
     // Remove any extra spaces from the input

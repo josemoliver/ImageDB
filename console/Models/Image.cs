@@ -15,6 +15,8 @@ public partial class Image
 
     public string Filepath { get; set; }
 
+    public string Album { get; set; }
+
     public string Sha1 { get; set; }
 
     public string Format { get; set; }
