@@ -1,10 +1,10 @@
-# Image Database Management Tool
+# Image Management - Database Loader Tool
 
 ## Installation
 
 1. Ensure you have the following prerequisites installed:
    - .NET Core SDK 8
-   - EXIFTool.exe (https://exiftool.org/)
+   - EXIFTool.exe (https://exiftool.org/) - Include the exiftool.exe folder in your system's PATH folder.
 
 2. Clone the repository:
    ```
@@ -44,7 +44,7 @@ To run the tool, use the following command:
 dotnet run -- [options]
 ```
 
-For example, to scan a specific folder:
+For example, to scan a specific folder, included in the PhotoLibrary db table:
 
 ```
 dotnet run -- --folder "C:\Users\YourUsername\Pictures"
@@ -53,7 +53,7 @@ dotnet run -- --folder "C:\Users\YourUsername\Pictures"
 To reload the metadata for an existing library:
 
 ```
-dotnet run -- --reloadmeta
+dotnet run -- --reloadmeta true
 ```
 
 The tool will scan the specified folder (or all libraries if no folder is provided) for image files, process the metadata, and update the database accordingly. The database is meant for users familiar with SQL and photo metadata to analyse the file metadata of their photo collections.
