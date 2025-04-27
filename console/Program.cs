@@ -60,7 +60,7 @@ rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, s
 {
     photoFolderFilter = folder;
     
-    if ((reloadmeta != null) && (reloadmeta.ToLower() != "false"))
+    if ((reloadmeta != null) && (reloadmeta.ToLower() == "true"))
     {
         reloadMetadata = true;
         Console.WriteLine("[START] - Reloading existing metadata, no new and update from files.");
@@ -657,8 +657,10 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
         string stringLatitude           = "";
         string stringLongitude          = "";
         string stringAltitude           = "";
-
-        decimal? latitude;
+        string latitudeRef              = "";   
+        string longitudeRef             = "";
+    
+    decimal? latitude;
         decimal? longitude;
         decimal? altitude;
 
@@ -715,15 +717,15 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
         // Parse the JSON string dynamically into a JsonDocument
         using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
             {
-            //File Properties
+                //File Properties
                 if (doc.RootElement.TryGetProperty("System:FileCreateDate", out var propertyFileDateCreated) && !string.IsNullOrWhiteSpace(propertyFileDateCreated.GetString()))
                 { fileCreatedDate = propertyFileDateCreated.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("System:FileModifyDate", out var propertyFileDateModified) && !string.IsNullOrWhiteSpace(propertyFileDateModified.GetString()))
                 { fileModifiedDate = propertyFileDateModified.GetString().Trim() ?? ""; }
 
 
-            //Title
-            if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
+                //Title
+                if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
                 { title = propertyXPTitle.GetString().Trim() ?? ""; }
                 if (doc.RootElement.TryGetProperty("IPTC:Headline", out var propertyHeadline) && !string.IsNullOrWhiteSpace(propertyHeadline.GetString()))
                 { title = propertyHeadline.GetString().Trim() ?? ""; }
@@ -822,6 +824,25 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
             catch 
             {
                 altitude = null;
+            }
+
+            // Get GPS Ref
+            if (doc.RootElement.TryGetProperty("GPS:GPSLatitudeRef", out var propertyLatitudeRef) && !string.IsNullOrWhiteSpace(propertyLatitudeRef.GetString()))
+            { latitudeRef = propertyLatitudeRef.GetString().Trim() ?? ""; }
+            
+            // Change latitude value to negative if latitudeRef is "S"
+            if ((latitude != null)&&(latitude>0) && (latitudeRef.Trim().ToUpper()=="S"))
+            {
+                latitude = latitude * -1;
+            }
+                        
+            if (doc.RootElement.TryGetProperty("GPS:GPSLongitudeRef", out var propertyLongitudeRef) && !string.IsNullOrWhiteSpace(propertyLongitudeRef.GetString()))
+            { longitudeRef = propertyLongitudeRef.GetString().Trim() ?? ""; }
+            
+            // Change longitude value to negative if longitudeRef is "W"
+            if ((longitude != null) && (longitude > 0) && (longitudeRef.Trim().ToUpper() == "W"))
+            {
+                longitude = longitude * -1;
             }
 
             // Get Location
@@ -1165,13 +1186,13 @@ static string GetNormalizedFolderPath(string folderPath)
     return NormalizePathCase(fullPath);
 }
 
-static string NormalizePathCase(string path)
+static string NormalizePathCase(string folderPath)
 {
     // Get the root drive (e.g., C:\)
-    string root = Path.GetPathRoot(path);
+    string root = Path.GetPathRoot(folderPath);
 
     // Get all directories and the file name if any
-    string[] directories = path.Substring(root.Length).Split(Path.DirectorySeparatorChar);
+    string[] directories = folderPath.Substring(root.Length).Split(Path.DirectorySeparatorChar);
 
     // Build the normalized path by iterating through each directory
     string normalizedPath = root;
