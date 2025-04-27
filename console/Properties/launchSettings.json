@@ -2,7 +2,7 @@
   "profiles": {
     "ImageDB": {
       "commandName": "Project",
-      "commandLineArgs": "--reloadmeta false  --scanmode date"
+      "commandLineArgs": "--reloadmeta false  --scanmode date --folder \"D:\\Users\\Jose\\Pictures\\Photos\\2020\""
     }
   }
 }

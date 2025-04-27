@@ -152,7 +152,7 @@ void LogEntry(int batchId, string filePath, string logEntry)
         };
 
         dbFiles.Add(newLog);
-
+        dbFiles.SaveChanges();
     }
 }
 
@@ -198,9 +198,9 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         DirectoryInfo info = new DirectoryInfo(photoFolder);
         string[] fileExtensions = { ".jpg", ".jpeg", ".jxl", ".heic" };
 
-        // Get IgnoreFolders values from appsettings.json   
+        // Get IgnoreFolders values from appsettings.json, default to empty array if empty.   
         var configuration = new ConfigurationManager().AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).Build();
-        string[] ignoreFolders = configuration.GetSection("IgnoreFolders").Get<string[]>();
+        string[] ignoreFolders = configuration.GetSection("IgnoreFolders").Get<string[]>() ?? new string[0]; 
 
 
         FileInfo[] files = info.GetFiles("*.*", SearchOption.AllDirectories)
@@ -406,6 +406,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 {
                     dbFiles.Images.Remove(imageToRemove);
                     filesDeleted++;
+                    LogEntry(batchID, missingFile,"Removed.");
                 }
             }
             catch (Exception ex)
