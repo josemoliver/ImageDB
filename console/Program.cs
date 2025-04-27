@@ -44,13 +44,15 @@ var rootCommand = new RootCommand
         )
 };
 
+ExifToolHelper.CheckExiftool();
+
 using var db = new CDatabaseImageDBsqliteContext();
 
-var photoLibrary = db.PhotoLibraries.ToList();
-string photoFolderFilter = string.Empty;
-bool reloadMetadata = false;
-bool quickScan = false;
-bool dateScan = false;
+var photoLibrary            = db.PhotoLibraries.ToList();
+string photoFolderFilter    = string.Empty;
+bool reloadMetadata         = false;
+bool quickScan              = false;
+bool dateScan               = false;
 
 // Handler to process the command-line arguments
 rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, string scanmode) =>
@@ -133,6 +135,9 @@ foreach (var folder in photoLibrary)
     }
 }
 
+// Shutdown ExifTool process
+ExifToolHelper.Shutdown();
+
 void LogEntry(int batchId, string filePath, string logEntry)
 {
     using var dbFiles = new CDatabaseImageDBsqliteContext();
@@ -193,6 +198,11 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         DirectoryInfo info = new DirectoryInfo(photoFolder);
         string[] fileExtensions = { ".jpg", ".jpeg", ".jxl", ".heic" };
 
+        // Get IgnoreFolders values from appsettings.json   
+        var configuration = new ConfigurationManager().AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).Build();
+        string[] ignoreFolders = configuration.GetSection("IgnoreFolders").Get<string[]>();
+
+
         FileInfo[] files = info.GetFiles("*.*", SearchOption.AllDirectories)
             .Where(p => fileExtensions.Contains(p.Extension.ToLower()))
             .OrderByDescending(p => p.LastWriteTime)
@@ -201,22 +211,32 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         // Iterate over each file and add them to imageFiles
         foreach (FileInfo file in files)
         {
+            // Check if the file is in an ignored folder
+            if (ignoreFolders.Any(folder => file.FullName.Contains(folder, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue; // Skip this file
+            }
+
             imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString(),file.Length.ToString(),file.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt")));         
         }
 
         // Start Batch entry get batch id
         var newBatch = new Batch
         {
-            StartDateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-            PhotoLibraryId = photoLibraryId,
-            FilesFound = imageFiles.Count
+            StartDateTime   = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            PhotoLibraryId  = photoLibraryId,
+            FilesFound      = imageFiles.Count
         };
 
         // Add the new batch entry to the database
         dbFiles.Add(newBatch);
         dbFiles.SaveChanges();
+        
         int batchID = newBatch.BatchId;
+
+        // Flag to suspend the scan
         bool suspendScan = false;
+        
         Console.WriteLine("[BATCH] - Started batch Id: " + batchID+" Files Found: "+imageFiles.Count);
 
         // Iterate over each image file
@@ -244,7 +264,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 try
                 {
                     AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
-                    filesAdded++;
+                    filesAdded++;                    
                 }
                 catch (Exception ex)
                 {
@@ -361,10 +381,13 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
         List<string> compareImageFiles = new List<string>();
 
+        // Get all files in the directory and subdirectories
         foreach (var imageFile in imageFiles)
         {
             compareImageFiles.Add(imageFile.FilePath);
         }
+
+        // Convert the list to a HashSet for faster lookups
         var folderFilePaths = compareImageFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Find files that are in the database but not in the current folder
@@ -426,35 +449,37 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
             Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
             Console.WriteLine("[RESULTS] - Files Found: "+imageFiles.Count+" Added: " + filesAdded + " Updated: "+ filesUpdated+" Skipped: " + filesSkipped + " Removed: " + filesDeleted + " Error: " + filesError);
+            
 
             // Get elapsed time in seconds
             int elapsedTime = 0;
-            try { elapsedTime = (int)(DateTime.Parse(jobbatch.EndDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
+            string endDateTime = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
+
+            try { elapsedTime = (int)(DateTime.Parse(endDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
 
             string elapsedTimeComment = "";
             if (elapsedTime >= 3600) // Greater than or equal to 1 hour
             {
-                int hours           = elapsedTime / 3600;
-                int minutes         = (elapsedTime % 3600) / 60;
-                elapsedTimeComment  = $"{hours} hour(s) and {minutes} minute(s)";
-                Console.WriteLine($"Elapsed Time: "+ elapsedTimeComment);
+                int hours = elapsedTime / 3600;
+                int minutes = (elapsedTime % 3600) / 60;
+                elapsedTimeComment = $"{hours} hour(s) and {minutes} minute(s)";
+                Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
             else if (elapsedTime >= 60) // Greater than or equal to 1 minute
             {
-                int minutes         = elapsedTime / 60;
-                int seconds         = elapsedTime % 60;
-                elapsedTimeComment  = $"{minutes} minute(s) and {seconds} second(s)";
-                Console.WriteLine($"Elapsed Time: " +elapsedTimeComment);
+                int minutes = elapsedTime / 60;
+                int seconds = elapsedTime % 60;
+                elapsedTimeComment = $"{minutes} minute(s) and {seconds} second(s)";
+                Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
             else // Less than 1 minute
             {
-                elapsedTimeComment  = $"{elapsedTime} second(s)";
+                elapsedTimeComment = $"{elapsedTime} second(s)";
                 Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
-
             if (jobbatch != null)
             {
-                jobbatch.EndDateTime    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                jobbatch.EndDateTime    = endDateTime;
                 jobbatch.FilesUpdated   = filesUpdated;
                 jobbatch.FilesAdded     = filesAdded;
                 jobbatch.FilesSkipped   = filesSkipped;
@@ -502,8 +527,8 @@ async void UpdateImage(int imageId, string updatedSHA1)
             {
                 // Handle the case where jsonMetadata is empty
                 Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
-                LogEntry(-1, specificFilePath, "No metadata found for the file");
-                return;
+                LogEntry(-1, specificFilePath, "No metadata found for the file.");
+                throw new ArgumentException("No metadata found for the file.");
             }
 
             // Get the file size and creation/modification dates
@@ -541,74 +566,75 @@ async void UpdateImage(int imageId, string updatedSHA1)
 
 async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
 {
-    //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
-    string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
-
-    if (jsonMetadata == "")
-    {
-        // Handle the case where jsonMetadata is empty
-        Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
-        return;
-    }
-
     int imageId = 0;
-    string recordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
-
+    
     // Dictionary to map file extensions to normalized values
     var extensionMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        { "jpg", "jpeg" },
-        { "jpeg", "jpeg" },
-        { "jxl", "jpeg-xl" },
-        { "heic", "heic" }
+            { "jpg", "jpeg" },
+            { "jpeg", "jpeg" },
+            { "jxl", "jpeg-xl" },
+            { "heic", "heic" }
     };
 
-    // Normalize the file extension
-    fileExtension = fileExtension.Replace(".", "").ToLowerInvariant();
-    if (extensionMap.TryGetValue(fileExtension, out string normalizedExtension))
-    {
-        fileExtension = normalizedExtension;
-    }
 
-    // Add the new image to the database
-    using var dbFiles = new CDatabaseImageDBsqliteContext();
-    {
-        var newImage = new ImageDB.Models.Image
+        string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
+
+        if (jsonMetadata == "")
         {
-            PhotoLibraryId  = photoLibraryID,
-            BatchId         = batchId,           
-            Filepath        = specificFilePath,
-            Album           = GetAlbumName(photoFolder,specificFilePath.Replace(fileName,"")),
+            // Handle the case where jsonMetadata is empty
+            Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
+            LogEntry(-1, specificFilePath, "No metadata found for the file.");
+            throw new ArgumentException("No metadata found for the file.");
+        }       
 
-            Filename        = fileName,
-            Format          = fileExtension,
-            Filesize        = fileSize.ToString(),
-           
-            Metadata        = jsonMetadata,
-            RecordAdded     = recordAdded
-        };
 
-        dbFiles.Add(newImage);
 
-        int retryCount = 5;
-        while (retryCount-- > 0)
+        // Normalize the file extension
+        fileExtension = fileExtension.Replace(".", "").ToLowerInvariant();
+        if (extensionMap.TryGetValue(fileExtension, out string normalizedExtension))
         {
-            try
-            {
-                dbFiles.SaveChanges();
-                break;
-            }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-            {
-                Thread.Sleep(1000); // Wait and retry
-            }
+            fileExtension = normalizedExtension;
         }
-          
-        imageId = newImage.ImageId;
-    }
 
-    UpdateImageRecord(imageId,SHA1);
+        // Add the new image to the database
+        using var dbFiles = new CDatabaseImageDBsqliteContext();
+        {
+            var newImage = new ImageDB.Models.Image
+            {
+                PhotoLibraryId = photoLibraryID,
+                BatchId = batchId,
+                Filepath = specificFilePath,
+                Album = GetAlbumName(photoFolder, specificFilePath.Replace(fileName, "")),
 
+                Filename = fileName,
+                Format = fileExtension,
+                Filesize = fileSize.ToString(),
+
+                Metadata = jsonMetadata,
+                RecordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt")
+            };
+
+            dbFiles.Add(newImage);
+
+            int retryCount = 5;
+            while (retryCount-- > 0)
+            {
+                try
+                {
+                    dbFiles.SaveChanges();
+                    break;
+                }
+                catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+                {
+                    Thread.Sleep(1000); // Wait and retry
+                }
+            }
+
+            imageId = newImage.ImageId;
+        }
+
+        UpdateImageRecord(imageId, SHA1);
 }
 
 async void UpdateImageRecord(int imageID, string updatedSHA1)
@@ -1325,6 +1351,43 @@ public static class ExifToolHelper
         StartExifTool();
     }
 
+    public static void CheckExiftool()
+    {
+        try
+        {
+            // Start a process to get the version of exiftool
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "exiftool.exe",
+                    Arguments = "-ver", // Argument to fetch the version number
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = Encoding.UTF8
+                }
+            };
+
+            process.Start();
+            string version = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+
+            if (string.IsNullOrEmpty(version))
+            {
+                Console.WriteLine("[EXIFTOOL] - Exiftool is not installed or not found.");
+            }
+            else
+            {
+                Console.WriteLine($"[EXIFTOOL] - Exiftool version: {version}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[EXCEPTION] - " + ex.Message);
+        }
+    }
+
     private static void StartExifTool()
     {
         exiftoolProcess = new Process
@@ -1360,11 +1423,16 @@ public static class ExifToolHelper
                     StartExifTool();
 
                 var cmd = new StringBuilder();
-                
+
+                // Ensure the filepath is properly quoted if it contains spaces or special characters
+                string quotedFilepath = $"\"{filepath}\"";
+
                 // Add command options
                 cmd.AppendLine($"-json");   // JSON output
                 cmd.AppendLine($"-G1");     // Group output by tag
-                cmd.AppendLine($"-n");      // Numeric output     
+                cmd.AppendLine($"-n");      // Numeric output
+                //cmd.AppendLine($"-charset UTF8");
+                //cmd.AppendLine($"-charset filename=UTF8");      // Filename as UTF-8
                 cmd.AppendLine(filepath);   // File path
                 cmd.AppendLine("-execute"); // Execute the command
 
@@ -1385,7 +1453,6 @@ public static class ExifToolHelper
                 string result = outputBuilder.ToString().Trim();
 
 
-
                 // This is a workaround for Exiftool which adds the array brackets as well as sometimes changes the datatype of the values. All values will be returning as text.
                 result = result.Trim('[', ']');
                 result = JsonConverter.ConvertNumericAndBooleanValuesToString(result);
@@ -1398,7 +1465,25 @@ public static class ExifToolHelper
                 return string.Empty;
             }
         }
-    } 
+    }
+
+    public static void Shutdown()
+    {
+        lock (exiftoolLock)
+        {
+            try
+            {
+                exiftoolInput?.Write("-stay_open\nFalse\n");
+                exiftoolInput?.Flush();
+                exiftoolInput?.Close();
+                exiftoolOutput?.Close();
+
+                exiftoolProcess?.WaitForExit(2000);
+                exiftoolProcess?.Dispose();
+            }
+            catch { }
+        }
+    }
 }
 
 public class ImageFile
