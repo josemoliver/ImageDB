@@ -182,8 +182,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         var imagesdbTable = dbFiles.Images.ToList();
 
         //List<string> imageFiles = new List<string>();
-        List<ImageFile> imageFiles = new List<ImageFile>();
-        
+        List<ImageFile> imageFiles = new List<ImageFile>();        
         
         // Define counters
         int filesAdded      = 0;
@@ -191,9 +190,6 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         int filesUpdated    = 0;
         int filesSkipped    = 0;
         int filesError      = 0;
-
-        // Define the file extensions to look for
-
 
         // Get all supported files in the directory and subdirectories
         DirectoryInfo info = new DirectoryInfo(photoFolder);
@@ -203,13 +199,13 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         var configuration = new ConfigurationManager().AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).Build();
         string[] ignoreFolders = configuration.GetSection("IgnoreFolders").Get<string[]>() ?? new string[0]; 
 
-
+        // Read all files from photo folder, including subfolders.
         FileInfo[] files = info.GetFiles("*.*", SearchOption.AllDirectories)
             .Where(p => fileExtensions.Contains(p.Extension.ToLower()))
             .OrderByDescending(p => p.LastWriteTime)
             .ToArray();
 
-        // Iterate over each file and add them to imageFiles
+        // Iterate over each file and add them to imageFiles, exclude ignored folders.
         foreach (FileInfo file in files)
         {
             // Check if the file is in an ignored folder
@@ -238,7 +234,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         // Flag to suspend the scan
         bool suspendScan = false;
         
-        Console.WriteLine("[BATCH] - Started batch Id: " + batchID+" Files Found: "+imageFiles.Count);
+        Console.WriteLine("[BATCH] - Started job. " + imageFiles.Count + " files Found.");
 
         // Iterate over each image file
         for (int i = 0; i < imageFiles.Count; i++)
@@ -450,9 +446,8 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             dbFiles.Database.ExecuteSqlRaw(deleteLocationTagQuery);
 
             Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
-            Console.WriteLine("[RESULTS] - Files Found: "+imageFiles.Count+" Added: " + filesAdded + " Updated: "+ filesUpdated+" Skipped: " + filesSkipped + " Removed: " + filesDeleted + " Error: " + filesError);
+            Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
             
-
             // Get elapsed time in seconds
             int elapsedTime = 0;
             string endDateTime = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
@@ -464,19 +459,19 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             {
                 int hours = elapsedTime / 3600;
                 int minutes = (elapsedTime % 3600) / 60;
-                elapsedTimeComment = $"{hours} hour(s) and {minutes} minute(s)";
+                elapsedTimeComment = $"{hours} hour(s) and {minutes} minute(s).";
                 Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
             else if (elapsedTime >= 60) // Greater than or equal to 1 minute
             {
                 int minutes = elapsedTime / 60;
                 int seconds = elapsedTime % 60;
-                elapsedTimeComment = $"{minutes} minute(s) and {seconds} second(s)";
+                elapsedTimeComment = $"{minutes} minute(s) and {seconds} second(s).";
                 Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
             else // Less than 1 minute
             {
-                elapsedTimeComment = $"{elapsedTime} second(s)";
+                elapsedTimeComment = $"{elapsedTime} second(s).";
                 Console.WriteLine($"Elapsed Time: " + elapsedTimeComment);
             }
             if (jobbatch != null)
@@ -579,7 +574,6 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             { "heic", "heic" }
     };
 
-
         string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
 
         if (jsonMetadata == "")
@@ -589,7 +583,6 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             LogEntry(-1, specificFilePath, "No metadata found for the file.");
             throw new ArgumentException("No metadata found for the file.");
         }       
-
 
 
         // Normalize the file extension
@@ -1216,18 +1209,3 @@ static string getFileSHA1(string filepath)
         return BitConverter.ToString(checksum).Replace("-", string.Empty);
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
