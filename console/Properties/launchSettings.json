@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ImageDB": {
+      "commandName": "Project",
+      "commandLineArgs": "--mode quick --folder \"D:\\Users\\Jose\\Pictures\\Photos\\2024\""
+    }
+  }
+}

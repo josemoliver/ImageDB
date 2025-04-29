@@ -1,0 +1,89 @@
+﻿{
+   "CodeGenerationMode": 4,
+   "ContextClassName": "C:\\Database\\ImageDB.sqliteContext",
+   "ContextNamespace": null,
+   "FilterSchemas": false,
+   "IncludeConnectionString": true,
+   "ModelNamespace": null,
+   "OutputContextPath": null,
+   "OutputPath": "Models",
+   "PreserveCasingWithRegex": true,
+   "ProjectRootNamespace": "ImageDB",
+   "Schemas": null,
+   "SelectedHandlebarsLanguage": 2,
+   "SelectedToBeGenerated": 0,
+   "T4TemplatePath": null,
+   "Tables": [
+      {
+         "Name": "Batch",
+         "ObjectType": 0
+      },
+      {
+         "Name": "Image",
+         "ObjectType": 0
+      },
+      {
+         "Name": "Location",
+         "ObjectType": 0
+      },
+      {
+         "Name": "Log",
+         "ObjectType": 0
+      },
+      {
+         "Name": "MetadataHistory",
+         "ObjectType": 0
+      },
+      {
+         "Name": "PeopleTag",
+         "ObjectType": 0
+      },
+      {
+         "Name": "PhotoLibrary",
+         "ObjectType": 0
+      },
+      {
+         "Name": "relationLocation",
+         "ObjectType": 0
+      },
+      {
+         "Name": "relationPeopleTag",
+         "ObjectType": 0
+      },
+      {
+         "Name": "relationTag",
+         "ObjectType": 0
+      },
+      {
+         "Name": "Tag",
+         "ObjectType": 0
+      }
+   ],
+   "UiHint": null,
+   "UncountableWords": null,
+   "UseAsyncStoredProcedureCalls": true,
+   "UseBoolPropertiesWithoutDefaultSql": false,
+   "UseDatabaseNames": false,
+   "UseDatabaseNamesForRoutines": true,
+   "UseDateOnlyTimeOnly": true,
+   "UseDbContextSplitting": false,
+   "UseDecimalDataAnnotationForSprocResult": true,
+   "UseFluentApiOnly": true,
+   "UseHandleBars": false,
+   "UseHierarchyId": false,
+   "UseInflector": true,
+   "UseInternalAccessModifiersForSprocsAndFunctions": false,
+   "UseLegacyPluralizer": false,
+   "UseManyToManyEntity": false,
+   "UseNoDefaultConstructor": false,
+   "UseNoNavigations": false,
+   "UseNoObjectFilter": false,
+   "UseNodaTime": false,
+   "UseNullableReferences": false,
+   "UsePrefixNavigationNaming": false,
+   "UseSchemaFolders": false,
+   "UseSchemaNamespaces": false,
+   "UseSpatial": false,
+   "UseT4": false,
+   "UseT4Split": false
+}
