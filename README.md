@@ -14,7 +14,7 @@ Command line app which will scan the specified folder (or all libraries if no fo
 
 3. Navigate to the project directory:
    ```
-   cd image-database-tool
+   cd ImageDB
    ```
 
 4. Restore the project dependencies:
@@ -22,7 +22,7 @@ Command line app which will scan the specified folder (or all libraries if no fo
    dotnet restore
    ```
 
-5. Build the project:
+5. Build the project included under "console" folder:
    ```
    dotnet build
    ```
@@ -30,8 +30,11 @@ Command line app which will scan the specified folder (or all libraries if no fo
 ## Usage
 
 1. Use a SQLite Database Editor such as SQLite DB Browser (https://sqlitebrowser.org/). 
-2. Create SQLite Database by running the database\ImageDB.sqlite.sql file. Update the appsettings.json file with the path of your SQLite database file. You can also include folder paths to ingore. For example, some database management tools may create temp folders for deleted files you may wish not to include in the database. 
-3. Open database and add your photo collection folders to the PhotoLibrary table. For example, you may have a divided your photo collections into folders based on Years.
+2. Create SQLite Database by running the database\ImageDB.sqlite.sql file.
+3. Update the appsettings.json file with the path of your SQLite database file. You can also include folder paths to ingore. For example, some database management tools may create temp folders for deleted files you may wish not to include in the database. 
+4. Open database and add your photo collection folders to the PhotoLibrary table. For example, you may have a divided your photo collections into folders based on Years.
+5. Ensure exiftool.exe is properly installed and included in your system's PATH environment variable.
+6. Run ImageDB.exe
 
 
 The Image Database Management Tool provides the following command-line options:
