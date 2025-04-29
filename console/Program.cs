@@ -36,16 +36,11 @@ var rootCommand = new RootCommand
         description: "Path to specific library to scan."
     ),
     new Option<string>(
-        "--reloadmeta",
-        description: "Re-process already scanned metatada. Ignore any file updates."
-    ),
-        new Option<string>(
-        "--scanmode",
-        description: "Set scan modes: normal (default) | date | quick"
-        )
+        "--mode",
+        description: "Set modes: normal (default) | date | quick | reload"
+    )
 };
 
-ExifToolHelper.CheckExiftool();
 
 using var db = new CDatabaseImageDBsqliteContext();
 
@@ -56,41 +51,35 @@ bool quickScan              = false;
 bool dateScan               = false;
 
 // Handler to process the command-line arguments
-rootCommand.Handler = CommandHandler.Create((string folder, string reloadmeta, string scanmode) =>
+rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
 {
     photoFolderFilter = folder;
-    
-    if ((reloadmeta != null) && (reloadmeta.ToLower() == "true"))
+    // Determine the mode and set appropriate flags
+    reloadMetadata = string.Equals(mode, "reload", StringComparison.OrdinalIgnoreCase);
+
+    if (reloadMetadata)
     {
-        reloadMetadata = true;
-        Console.WriteLine("[START] - Reloading existing metadata, no new and update from files.");
+        Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");
+   
     }
     else
     {
-        reloadMetadata = false;
-        Console.WriteLine("[START] - Scanning for new and updated files.");
-    }
+        // Check if Exiftool is properly installed, terminate app on error
+        if (!ExifToolHelper.CheckExiftool())
+        {
+            Environment.Exit(1);
+        }
 
-    if ((scanmode == null) || (scanmode.ToLower() == "normal"))
-    {
-        quickScan = false;
-        Console.WriteLine("[START] - Integrity scan for new and updated files.");
-    }
-    else if (scanmode.ToLower() == "date")
-    {
-        dateScan = true;
-        quickScan = false;
-        Console.WriteLine("[START] - Scan for changes using file modified date.");        
-    }
-    else if (scanmode.ToLower() == "quick")
-    {
-        dateScan = true;
-        quickScan = true;
-        Console.WriteLine("[START] - Quick scan for changes using file modified date.");
+        // Set scan modes based on the provided mode
+        SetScanMode(mode);
+
+        Console.WriteLine("[START] - Scanning for new and updated files.");
+
     }
 
     return Task.CompletedTask;
 });
+
 
 // Parse and invoke the command
 await rootCommand.InvokeAsync(args);
@@ -103,7 +92,6 @@ if (string.IsNullOrEmpty(photoFolderFilter))
 }
 else
 {
-    photoFolderFilter = photoFolderFilter.Trim('\\');
     photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
     Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
 }
@@ -139,6 +127,32 @@ foreach (var folder in photoLibrary)
 // Shutdown ExifTool process
 ExifToolHelper.Shutdown();
 
+
+// Method to set the scan mode based on the input
+void SetScanMode(string mode)
+{
+    // Default to normal mode
+    dateScan = false;
+    quickScan = false;
+    
+    if (string.IsNullOrEmpty(mode) || string.Equals(mode, "normal", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine("[MODE] - Integrity scan for new and updated files.");
+    }
+    else if (string.Equals(mode, "date", StringComparison.OrdinalIgnoreCase))
+    {
+        dateScan = true;
+        Console.WriteLine("[MODE] - Scan for changes using file modified date.");
+    }
+    else if (string.Equals(mode, "quick", StringComparison.OrdinalIgnoreCase))
+    {
+        dateScan = true;
+        quickScan = true;
+        Console.WriteLine("[MODE] - Quick scan for changes using file modified date.");
+    }
+}
+
+
 void LogEntry(int batchId, string filePath, string logEntry)
 {
     using var dbFiles = new CDatabaseImageDBsqliteContext();
@@ -166,8 +180,8 @@ void ReloadMetadata(int photoLibraryId)
 
         foreach (var imageId in imagesFromLibrary)
         {            
-            UpdateImageRecord(imageId, "");
-            Console.WriteLine("[UPDATE] - Reloading metadata for Image Id: " + imageId);
+            UpdateImageRecord(imageId, "", null);
+            Console.WriteLine("[UPDATE] - Reprocessing metadata for Image Id: " + imageId);
         }
 
     }
@@ -296,7 +310,8 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
-                        UpdateImage(imageId, SHA1);
+                        CopyImageToMetadataHistory(imageId);
+                        UpdateImage(imageId, SHA1, batchID);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -314,9 +329,10 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     imageId = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.ImageId).FirstOrDefault();
                     Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
-                    {   
+                    {
                         // Update file record
-                        UpdateImage(imageId, SHA1);
+                        CopyImageToMetadataHistory(imageId);
+                        UpdateImage(imageId, SHA1, batchID);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -335,7 +351,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     try
                     {
                         // Update file record
-                        UpdateImage(imageId, SHA1);
+                        UpdateImage(imageId, SHA1, batchID);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -505,7 +521,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
     }
 }
 
-async void UpdateImage(int imageId, string updatedSHA1)
+async void UpdateImage(int imageId, string updatedSHA1, int batchID)
 {
     string specificFilePath = string.Empty;
     // Find the image by ImageId
@@ -558,7 +574,7 @@ async void UpdateImage(int imageId, string updatedSHA1)
         }
     }
 
-    UpdateImageRecord(imageId, updatedSHA1);
+    UpdateImageRecord(imageId, updatedSHA1, batchID);
 }
 
 async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
@@ -598,7 +614,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             var newImage = new ImageDB.Models.Image
             {
                 PhotoLibraryId = photoLibraryID,
-                BatchId = batchId,
+                AddedBatchId = batchId,
                 Filepath = specificFilePath,
                 Album = GetAlbumName(photoFolder, specificFilePath.Replace(fileName, "")),
 
@@ -629,10 +645,10 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             imageId = newImage.ImageId;
         }
 
-        UpdateImageRecord(imageId, SHA1);
+        UpdateImageRecord(imageId, SHA1, null);
 }
 
-async void UpdateImageRecord(int imageID, string updatedSHA1)
+async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 {
         // Initialize variables for metadata extraction
         string jsonMetadata;
@@ -660,7 +676,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
         string latitudeRef              = "";   
         string longitudeRef             = "";
     
-    decimal? latitude;
+        decimal? latitude;
         decimal? longitude;
         decimal? altitude;
 
@@ -757,14 +773,16 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 // Get DateTimeTaken
                 string xmpDateTime = "";
                 dateTimeTaken = fileCreatedDate;
-                if (doc.RootElement.TryGetProperty("Composite:DateTimeCreated", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
-                { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; xmpDateTime = propertyDateTimeCreated.GetString() ?? ""; }
+             //   if (doc.RootElement.TryGetProperty("Composite:DateTimeCreated", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
+             //   { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; xmpDateTime = propertyDateTimeCreated.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
                 { dateTimeTaken = propertyPhotoshopDate.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
                 { dateTimeTaken = propertyCreateDate.GetString() ?? ""; }
                 if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
                 { dateTimeTaken = propertyDateTimeOriginal.GetString() ?? "";  }
+
+                dateTimeTaken = dateTimeTaken.Trim();
 
                 //Get TimeZone
                 if (doc.RootElement.TryGetProperty("ExifIFD:OffsetTimeOriginal", out var propertyOffsetTimeOriginal) && !string.IsNullOrWhiteSpace(propertyOffsetTimeOriginal.GetString()))
@@ -1084,7 +1102,8 @@ async void UpdateImageRecord(int imageID, string updatedSHA1)
                 // Update the file path and other properties only when necessary. Not needed when perfoming a metadata reload.
                 if (updatedSHA1 != "")
                 {
-                    image.Sha1 = updatedSHA1;                 
+                    image.Sha1              = updatedSHA1;
+                    image.ModifiedBatchId   = batchId;
                 }
 
                 // Save the changes to the database
@@ -1131,6 +1150,7 @@ static string GetAlbumName(string photoLibrary, string filePath)
     filePath = filePath.Replace(photoLibrary, "");
     filePath = filePath.Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     filePath = filePath.Replace(Path.DirectorySeparatorChar.ToString(), " - ");
+    filePath = filePath.Trim();
     return filePath;
 }
 static string FormatTimezone(string input)
@@ -1167,6 +1187,10 @@ static string FormatTimezone(string input)
 }
 static string GetNormalizedFolderPath(string folderPath)
 {
+    folderPath = folderPath.Trim();
+    folderPath = folderPath.Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    folderPath = folderPath.TrimEnd('\\');
+    
     // Ensure the folder path is valid and not null or empty
     if (string.IsNullOrEmpty(folderPath))
     {
@@ -1188,6 +1212,11 @@ static string GetNormalizedFolderPath(string folderPath)
 
 static string NormalizePathCase(string folderPath)
 {
+    // Check for null input and return an empty string
+    if (folderPath == null)
+    {
+        return string.Empty;
+    }
     // Get the root drive (e.g., C:\)
     string root = Path.GetPathRoot(folderPath);
 
@@ -1230,3 +1259,50 @@ static string getFileSHA1(string filepath)
         return BitConverter.ToString(checksum).Replace("-", string.Empty);
     }
 }
+
+static void CopyImageToMetadataHistory(int imageId)
+{
+    using var dbFiles = new CDatabaseImageDBsqliteContext();
+    {
+        // Fetch the Image record from the Image table
+         var image = dbFiles.Images.FirstOrDefault(img => img.ImageId == imageId);
+
+        if (image == null)
+        {
+            throw new Exception("[EXCEPTION] - Image record not found.");
+        }
+
+        // Create a new MetadataHistory record and copy the values
+        var metadataHistory = new MetadataHistory
+        {
+            ImageId = image.ImageId,
+            Filepath = image.Filepath,
+            Metadata = image.Metadata,
+            RecordAdded = image.RecordAdded,
+            AddedBatchId = image.AddedBatchId,
+            RecordModified = image.RecordModified,
+            ModifiedBatchId = image.ModifiedBatchId
+        };
+
+        dbFiles.MetadataHistories.Add(metadataHistory);
+
+        // Save changes to the database
+        int retryCount = 5;
+        while (retryCount-- > 0)
+        {
+            try
+            {
+                dbFiles.SaveChanges();
+                break;
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+            {
+                Thread.Sleep(1000); // Wait and retry
+            }
+        }
+
+    }
+}
+
+
+

@@ -11,8 +11,6 @@ public partial class Image
 
     public int? PhotoLibraryId { get; set; }
 
-    public int? BatchId { get; set; }
-
     public string Filepath { get; set; }
 
     public string Album { get; set; }
@@ -65,5 +63,9 @@ public partial class Image
 
     public string RecordAdded { get; set; }
 
+    public int? AddedBatchId { get; set; }
+
     public string RecordModified { get; set; }
+
+    public int? ModifiedBatchId { get; set; }
 }

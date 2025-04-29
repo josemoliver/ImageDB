@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Transactions;
 
 namespace ImageDB
 {
@@ -20,8 +21,10 @@ namespace ImageDB
             StartExifTool();
         }
 
-        public static void CheckExiftool()
+        public static bool CheckExiftool()
         {
+            bool exiftoolReady = false;
+
             try
             {
                 // Start a process to get the version of exiftool
@@ -44,17 +47,22 @@ namespace ImageDB
 
                 if (string.IsNullOrEmpty(version))
                 {
-                    Console.WriteLine("[EXIFTOOL] - Exiftool is not installed or not found.");
+                    Console.WriteLine("[EXIFTOOL] - Exiftool is not installed or not found. Download exiftool from exiftool.org.");
+                    exiftoolReady = false;
                 }
                 else
                 {
                     Console.WriteLine($"[EXIFTOOL] - Exiftool version: {version}");
+                    exiftoolReady = true;
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("[EXCEPTION] - " + ex.Message);
+                exiftoolReady = false;
             }
+
+            return exiftoolReady;
         }
 
         private static void StartExifTool()

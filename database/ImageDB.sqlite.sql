@@ -10,90 +10,9 @@ CREATE TABLE IF NOT EXISTS "Batch" (
 	"FilesSkipped"	INTEGER,
 	"FilesRemoved"	INTEGER,
 	"FilesReadError"	INTEGER,
+	"ElapsedTime"	INTEGER,
+	"Comment"	TEXT,
 	PRIMARY KEY("BatchID" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Image" (
-	"ImageId"	INTEGER,
-	"PhotoLibraryId"	INTEGER,
-	"BatchId"	INTEGER,
-	"Filepath"	TEXT UNIQUE,
-	"SHA1"	TEXT,
-	"Format"	TEXT,
-	"Filename"	TEXT,
-	"Filesize"	TEXT,
-	"FileCreatedDate"	TEXT,
-	"FileModifiedDate"	TEXT,
-	"Title"	TEXT,
-	"Description"	TEXT,
-	"Rating"	TEXT,
-	"DateTimeTaken"	TEXT,
-	"DateTimeTakenTimeZone"	TEXT,
-	"Device"	TEXT,
-	"Latitude"	NUMERIC,
-	"Longitude"	NUMERIC,
-	"Altitude"	NUMERIC,
-	"Location"	TEXT,
-	"City"	TEXT,
-	"StateProvince"	TEXT,
-	"Country"	TEXT,
-	"CountryCode"	TEXT,
-	"Creator"	TEXT,
-	"Copyright"	TEXT,
-	"Metadata"	TEXT,
-	"RecordAdded"	TEXT,
-	"RecordModified"	TEXT,
-	PRIMARY KEY("ImageId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Location" (
-	"LocationId"	INTEGER,
-	"LocationIdentifier"	TEXT,
-	"LocationName"	TEXT,
-	"Latitude"	TEXT,
-	"Longitude"	TEXT,
-	PRIMARY KEY("LocationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Log" (
-	"LogEntryId"	INTEGER,
-	"Datetime"	TEXT,
-	"BatchID"	INTEGER,
-	"Filepath"	TEXT,
-	"LogEntry"	TEXT,
-	PRIMARY KEY("LogEntryId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "PeopleTag" (
-	"PeopleTagId"	INTEGER,
-	"PersonName"	TEXT UNIQUE,
-	"FSId"	TEXT,
-	PRIMARY KEY("PeopleTagId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "PhotoLibrary" (
-	"PhotoLibraryId"	INTEGER,
-	"Folder"	TEXT NOT NULL,
-	PRIMARY KEY("PhotoLibraryId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Tag" (
-	"TagId"	INTEGER,
-	"TagName"	TEXT UNIQUE,
-	"Source"	INTEGER,
-	PRIMARY KEY("TagId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationLocation" (
-	"LocationRelationId"	INTEGER,
-	"ImageId"	INTEGER,
-	"LocationId"	INTEGER,
-	PRIMARY KEY("LocationRelationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationPeopleTag" (
-	"PeopleRelationId"	INTEGER,
-	"ImageId"	INTEGER,
-	"PeopleTagId"	INTEGER,
-	PRIMARY KEY("PeopleRelationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationTag" (
-	"RelationTagId"	INTEGER,
-	"ImageId"	INTEGER,
-	"TagId"	INTEGER,
-	PRIMARY KEY("RelationTagId" AUTOINCREMENT)
 );
 CREATE VIEW vCreator AS
 SELECT ImageId,Filepath, 
@@ -116,11 +35,19 @@ SELECT ImageId,Filepath,Device,
 json_extract(Metadata, '$.IFD0:Make') AS Make,
 json_extract(Metadata, '$.IFD0:Model') AS Model 
 FROM Image;
+CREATE VIEW vDevicesCount AS
+SELECT Device, COUNT(Device) AS DeviceCount FROM vDevices
+GROUP BY Device
+ORDER BY DeviceCount DESC;
 CREATE VIEW vDuplicateFilenames AS
 SELECT LOWER(Filename) AS Filename, COUNT(*) 
 FROM Image
 GROUP BY LOWER(Filename)
 HAVING COUNT(*) > 1;
+CREATE VIEW vLocations AS
+SELECT Location,StateProvince,Country,City,AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude 
+FROM Image
+GROUP BY Location,StateProvince,Country,City;
 CREATE VIEW vMetadataKeys AS
 WITH json_keys AS (
     SELECT 
@@ -140,6 +67,8 @@ GROUP BY
     json_key
 ORDER BY 
     key_count DESC;
+CREATE VIEW vPhotoDates AS
+SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.IPTC:DateCreated') AS IPTCDate,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS ExifDateTimeOriginal,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTCTime, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPDateTaken, Metadata FROM Image;
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Copyright') AS Copyright,

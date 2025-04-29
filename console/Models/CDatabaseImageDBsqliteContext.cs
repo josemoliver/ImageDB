@@ -25,6 +25,8 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 
     public virtual DbSet<Log> Logs { get; set; }
 
+    public virtual DbSet<MetadataHistory> MetadataHistories { get; set; }
+
     public virtual DbSet<PeopleTag> PeopleTags { get; set; }
 
     public virtual DbSet<PhotoLibrary> PhotoLibraries { get; set; }
@@ -74,6 +76,13 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.ToTable("Log");
 
             entity.Property(e => e.BatchId).HasColumnName("BatchID");
+        });
+
+        modelBuilder.Entity<MetadataHistory>(entity =>
+        {
+            entity.HasKey(e => e.HistoryId);
+
+            entity.ToTable("MetadataHistory");
         });
 
         modelBuilder.Entity<PeopleTag>(entity =>
