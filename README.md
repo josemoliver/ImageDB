@@ -1,5 +1,5 @@
 # Image Metadata Analysis - Database Loader Tool
-Command line app which will scan the specified folder (or all libraries if no folder is provided) for image files, process the metadata, and update the database accordingly. The app DOES NOT modify file metadata, simply READS the metadata leveraging the powerfull exiftool utility and LOADS it into a SQLite database. The database is meant for users familiar with SQL and photo metadata to analyse the file metadata of their photo collections.
+Command line app which will scan the specified folder (or all libraries if no folder is provided) for image files, process the metadata, and update the database accordingly. The app does not modify file metadata, simply reads the metadata leveraging the powerfull exiftool utility and loads it into a SQLite database. The database is meant for users familiar with SQL and photo metadata to analyse the file metadata of their photo collections.
 
 ## Installation
 
@@ -65,21 +65,53 @@ ImageDB.exe --folder "C:\Users\YourUsername\Pictures"
 Metadata Analisis:
 Using a SQLlite database management tool, open the database file so you can analyze your photo file's metadata.
 
-DB Tables:
-1. Batch - Keeps a log of ImageDB runs. Files scanned, processed count, and duration of scan runs.
-2. Image - Image metadata table. Includes tables with derived data from file metadata (For example, date and Device). The column Metadata contains the exiftool JSON output of the files with all the key/value pairs found by Exiftool. Detailed descriptions can be found in exiftool.org.
-3. Location - Location Identifiers found. If a photo metadata uses IPTC Location Identifiers. Refer to blog post: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/
-4. Log - Error log
-5. MetadataHistory - Prior to updating a record on the Image table, the exiftool JSON Metdata is copied to this table for archiving purposes. Say you wish to figure out what metadata fields have been changed by your photo management softare or wish.
-6. PeopleTag - People names found during scanning are stored here.
-7. PhotoLibrary - Your photo collection main folders. All files and subfolder contained are scan by the tool.
-8. Tag - Descriptive tags found duing scanning
-9. relation* - These tables maintain the ImageId relationships between tags, location identifiers, and people tags.
+## DB Tables:
 
-DB Views:
-The views are meant to assist in your metadata inspection and analysis. You will note that the exiftool JSON output can be queried using SQLite's Json Query Support - https://sqlite.org/json1.html. Feel free to edit existing ones or create your own.
+| Table            | Description                                             |
+| :------------     | :--------------------------------------------------------- | 
+| `Batch`     | Log of ImageDB runs. Files scanned, processed count, and duration of scan runs. |
+| `Image`    | Image metadata table. Includes tables with derived data from file metadata (For example, date and Device). The column Metadata contains the exiftool JSON output of the files with all the key/value pairs found by Exiftool. Detailed descriptions can be found in exiftool.org. |
+| `Log`  |  Error/Warning logs |
+| `Location`          | Location Identifiers found. If a photo metadata uses IPTC Location Identifiers. Refer to blog post: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/ |
+| `MetadataHistory`          | Prior to updating a record on the Image table, the exiftool JSON Metdata is copied to this table for archiving purposes. Say you wish to figure out what metadata fields have been changed by your photo management softare or wish. |
+| `PeopleTag`  |  People tags. |
+| `PhotoLibrary`  |  Your photo collection main folders. All files and subfolder contained are scan by the tool. |
+| `Tag`  |  Descriptive tags |
+| `relation*`  | These tables maintain the ImageId relationships between tags, location identifiers, and people tags. |
 
-Additional References:
+## DB Views:
+The views are meant to assist in your metadata inspection and analysis. For example, identifying field discrepancies, finding duplicate filenames, etc.
+You will note that the exiftool JSON output can be queried using SQLite's Json Query Support - https://sqlite.org/json1.html. Feel free to edit existing ones or create your own.
+
+## Metadata Table Fields:
+Although all the metadata tags retrieved using Exiftool are recorded into `Metadata` field, some other table values in the database are derived based on those fields for easier presentation.
+
+| Table.Column            | Source(s)                            |
+| :------------     | :--------------------------------------------------------- | 
+| `Image.Title`     | XMP-dc:Title,IPTC:ObjectName,IPTC:Headline,IFD0:XPTitle  |
+| `Image.Description`     | XMP-dc:Description,IPTC:Caption-Abstract,IFD0:ImageDescription,ExifIFD:UserComment,XMP-tiff:ImageDescription,IFD0:XPComment |
+| `Image.Album`     | PhotoLibrary subfolder  |
+| `Image.Rating`     | IFD0:Rating,XMP-xmp:Rating  |
+| `Image.DateTimeTaken`     | ExifIFD:DateTimeOriginal,ExifIFD:CreateDate,XMP-photoshop:DateCreated, File Created Date |
+| `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, Date Time (if included) |
+| `Image.Device`     | IFD0:Make and IFD0:Model |
+| `Image.Latitude`     | GPS:GPSLatitude and GPS:GPSLatitudeRef |
+| `Image.Longitude`     | GPS:GPSLongitude and GPS:GPSLongitudeRef|
+| `Image.GPSAltitude`     | GPS:GPSAltitude |
+| `Image.Location`     | XMP-iptcExt:LocationCreatedLocation, XMP-iptcExt:LocationCreatedSublocation, IPTC:Sub-location, XMP-iptcCore:Location  |
+| `Image.City`     | XMP-iptcExt:LocationCreatedCity, IPTC:City, XMP-photoshop:City |
+| `Image.StateProvince`     | XMP-iptcExt:LocationCreatedProvinceState, IPTC:Province-State, XMP-photoshop:State  |
+| `Image.Country`     | XMP-iptcExt:LocationCreatedCountryName, IPTC:Country-PrimaryLocationName, XMP-photoshop:Country |
+| `Image.CountryCode`     | XMP-iptcExt:LocationCreatedCountryCode, IPTC:Country-PrimaryLocationCode, XMP-iptcCore:CountryCode  |
+| `Image.Creator`     | IFD0:Artist, IPTC:By-line, XMP-dc:Creator, XMP-tiff:Artist |
+| `Image.Copyright`     | IFD0:Copyright, IPTC:CopyrightNotice, XMP-dc:Rights  |
+| `PeopleTag.PersonName`     | XMP-MP:RegionPersonDisplayName, XMP-mwg-rs:RegionName, XMP-iptcExt:PersonInImage  |
+| `Tag.TagName`     | IPTC:Keywords, XMP-dc:Subject, IFD0:XPKeywords  |
+| `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
+| `Location.LocationName`     | *From first Image.Location found during scan, can be modified afterwards.  |
+
+
+## Additional References:
 - https://savemetadata.org/
 - https://www.exiftool.org/TagNames/index.html
 - https://www.carlseibert.com/blog/
