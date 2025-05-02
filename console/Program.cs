@@ -28,6 +28,13 @@ using System.CommandLine.Invocation;
 using System.CommandLine.NamingConventionBinder;
 using Microsoft.Extensions.Logging.Abstractions;
 using ImageDB;
+using System.Text.RegularExpressions;
+
+// ImageDB
+// Source Repo & Documentation: https://github.com/josemoliver/ImageDB
+// Author: José Oliver-Didier
+// License: MIT
+
 
 var rootCommand = new RootCommand
 {
@@ -105,18 +112,20 @@ foreach (var folder in photoLibrary)
     if ((photoFolderFilter == "") || (photoFolder == photoFolderFilter))
     {       
 
-            //Fetch photoLibraryId
-            int photoLibraryId = 0;
-            photoLibraryId = photoLibrary.FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))?.PhotoLibraryId ?? 0;
+       //Fetch photoLibraryId
+       int photoLibraryId = 0;
+       photoLibraryId = photoLibrary.FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))?.PhotoLibraryId ?? 0;
 
-            if (photoLibraryId != 0)
+        if (photoLibraryId != 0)
             {
                 if (reloadMetadata == true)
                 {
+                    Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
                     ReloadMetadata(photoLibraryId);
                 }
                 else
                 {
+                    Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
                     ScanFiles(photoFolder, photoLibraryId);
                 }
   
@@ -732,78 +741,91 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
         // Parse the JSON string dynamically into a JsonDocument
         using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
+        {
+            //File Properties - Decending Priority
+            fileCreatedDate = GetExiftoolValue(doc, "System:FileCreateDate");
+            fileModifiedDate = GetExiftoolValue(doc, "System:FileModifyDate");
+
+            // Title
+            // No reference for this in the Metadata Working Group 2010 Spec, but it is a common tag used by many applications.
+            // IPTC Spec: https://iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#title
+            // SaveMetadata.org Ref: https://github.com/fhmwg/current-tags/blob/stage2-essentials/stage2-essentials.md
+            // Also reading legacy Windows XP Exif Title tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+            title = GetExiftoolValue(doc, new string[] { "XMP-dc:Title", "IPTC:ObjectName", "IFD0:XPTitle" });
+
+            //Description - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 36
+            // Also reading legacy Windows XP Exif Comment and Subject tags. These tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+            description = GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription","XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPComment", "IFD0:XPSubject", "IPTC:Headline" });
+
+            //Rating - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
+            rating = GetExiftoolValue(doc, new string[] { "IFD0:Rating", "XMP-xmp:Rating" });
+
+            //Get DateTimeTaken - Decending Priority - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
+            string tzDateTime   = "";   // Value which may contain timezone
+            string iptcDate     = "";   // IPTC Date       
+            string iptcTime     = "";   // IPTC Time
+            string iptcDateTime = "";   // IPTC DateTime
+
+            // Not part of the MWG spec - Use the file's system File Creation Date as a last resort for DateTimeTaken.
+            dateTimeTaken = fileCreatedDate;
+
+            iptcDate = GetExiftoolValue(doc, "IPTC:DateCreated");
+            iptcTime = GetExiftoolValue(doc, "IPTC:TimeCreated");
+     
+            if (iptcDate != "")
             {
-                //File Properties
-                if (doc.RootElement.TryGetProperty("System:FileCreateDate", out var propertyFileDateCreated) && !string.IsNullOrWhiteSpace(propertyFileDateCreated.GetString()))
-                { fileCreatedDate = propertyFileDateCreated.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("System:FileModifyDate", out var propertyFileDateModified) && !string.IsNullOrWhiteSpace(propertyFileDateModified.GetString()))
-                { fileModifiedDate = propertyFileDateModified.GetString().Trim() ?? ""; }
+                // Validate the date and time formats
+                string pattern = @"^([01]?[0-9]|2[0-3]):([0-5]?[0-9]):([0-5]?[0-9])([+-](0[0-9]|1[0-3]):([0-5][0-9]))?$";
 
-
-                //Title
-                if (doc.RootElement.TryGetProperty("IFD0:XPTitle", out var propertyXPTitle) && !string.IsNullOrWhiteSpace(propertyXPTitle.GetString()))
-                { title = propertyXPTitle.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("IPTC:Headline", out var propertyHeadline) && !string.IsNullOrWhiteSpace(propertyHeadline.GetString()))
-                { title = propertyHeadline.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("IPTC:ObjectName", out var propertyObjectName) && !string.IsNullOrWhiteSpace(propertyObjectName.GetString()))
-                { title = propertyObjectName.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("XMP-dc:Title", out var propertyTitle) && !string.IsNullOrWhiteSpace(propertyTitle.GetString()))
-                { title = propertyTitle.GetString().Trim() ?? ""; }
-
-                //Description
-                if (doc.RootElement.TryGetProperty("IFD0:XPComment", out var propertyXPComment) && !string.IsNullOrWhiteSpace(propertyXPComment.GetString()))
-                { description = propertyXPComment.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("XMP-tiff:ImageDescription", out var propertyTiffImageDescription) && !string.IsNullOrWhiteSpace(propertyTiffImageDescription.GetString()))
-                { description = propertyTiffImageDescription.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("ExifIFD:UserComment", out var propertyUserComment) && !string.IsNullOrWhiteSpace(propertyUserComment.GetString()))
-                { description = propertyUserComment.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("IFD0:ImageDescription", out var propertyImageDescription) && !string.IsNullOrWhiteSpace(propertyImageDescription.GetString()))
-                { description = propertyImageDescription.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("IPTC:Caption-Abstract", out var propertyCaptionAbstract) && !string.IsNullOrWhiteSpace(propertyCaptionAbstract.GetString()))
-                { description = propertyCaptionAbstract.GetString().Trim() ?? ""; }
-                if (doc.RootElement.TryGetProperty("XMP-dc:Description", out var propertyDescription) && !string.IsNullOrWhiteSpace(propertyDescription.GetString()))
-                { description = propertyDescription.GetString().Trim() ?? ""; }
-
-                //Rating
-                if (doc.RootElement.TryGetProperty("XMP-xmp:Rating", out var propertyXMPRating) && !string.IsNullOrWhiteSpace(propertyXMPRating.GetString()))
-                { rating = propertyXMPRating.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("IFD0:Rating", out var propertyRating) && !string.IsNullOrWhiteSpace(propertyRating.GetString()))
-                { rating = propertyRating.GetString() ?? ""; }
-
-                // Get DateTimeTaken
-                string xmpDateTime = "";
-                dateTimeTaken = fileCreatedDate;
-             //   if (doc.RootElement.TryGetProperty("Composite:DateTimeCreated", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
-             //   { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; xmpDateTime = propertyDateTimeCreated.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
-                { dateTimeTaken = propertyPhotoshopDate.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
-                { dateTimeTaken = propertyCreateDate.GetString() ?? ""; }
-                if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
-                { dateTimeTaken = propertyDateTimeOriginal.GetString() ?? "";  }
-
-                dateTimeTaken = dateTimeTaken.Trim();
-
-                //Get TimeZone
-                if (doc.RootElement.TryGetProperty("ExifIFD:OffsetTimeOriginal", out var propertyOffsetTimeOriginal) && !string.IsNullOrWhiteSpace(propertyOffsetTimeOriginal.GetString()))
-                { 
-                    dateTimeTakenTimeZone = propertyOffsetTimeOriginal.GetString() ?? ""; 
-                }
-
-                if (dateTimeTakenTimeZone == "")
+                if (Regex.IsMatch(iptcTime, pattern)==true)
                 {
-                    if (DateTimeOffset.TryParseExact(xmpDateTime, "yyyy:MM:dd HH:mm:sszzz", null, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTimeOffset dateTimeOffset))
-                    {
-                        // Extract the timezone offset
-                        TimeSpan timezoneOffset = dateTimeOffset.Offset;
-                        dateTimeTakenTimeZone= timezoneOffset.ToString();
-                    }
+                    iptcDateTime = iptcDate + " " + iptcTime; // Combine the IPTC date and time strings
+                    tzDateTime = dateTimeTaken.Trim();
+                }
+                else
+                {
+                    iptcDateTime = iptcDate + " 00:00:00"; // If no time available set to 00:00:00 (Ref https://iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#date-created)
                 }
 
-                if (dateTimeTakenTimeZone != "")
+                dateTimeTaken = iptcDateTime.Trim();         
+            }
+
+            // Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal and ExifIFD:CreateDate over IPTC DateTime as some applications use this.
+            if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
+            { dateTimeTaken = propertyDateTimeCreated.GetString() ?? ""; tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
+            if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
+                                  
+            { dateTimeTaken = propertyCreateDate.GetString() ?? ""; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
+            if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
+            { dateTimeTaken = propertyDateTimeOriginal.GetString() ?? ""; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
+            if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
+            { dateTimeTaken = propertyPhotoshopDate.GetString() ?? ""; tzDateTime = propertyPhotoshopDate.GetString() ?? ""; }
+
+            dateTimeTaken = dateTimeTaken.Trim();
+
+            // Get TimeZone - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 33
+            // Deviate from MWG standard, which was last updated in 2010 and prefer to populate TimeZone field the the OffsetTimeOriginal timezone property, if it exists. Many smartphone devices automatically set this field already per newer Exif 2.32 spec. 
+            string offsetTimeOriginal = GetExiftoolValue(doc, "ExifIFD:OffsetTimeOriginal");
+            if (offsetTimeOriginal!=String.Empty)
+            {
+                dateTimeTakenTimeZone = offsetTimeOriginal;
+            }
+
+            // If the OffsetTimeOriginal property is not available, use the XMP DateTimeOriginal or DateTimeCreated property
+            if (dateTimeTakenTimeZone == "")
+            {
+                if (DateTimeOffset.TryParseExact(tzDateTime, "yyyy:MM:dd HH:mm:sszzz", null, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTimeOffset dateTimeOffset))
                 {
-                    dateTimeTakenTimeZone = FormatTimezone(dateTimeTakenTimeZone);
+                    // Extract the timezone offset
+                    TimeSpan timezoneOffset = dateTimeOffset.Offset;
+                    dateTimeTakenTimeZone = timezoneOffset.ToString();
                 }
+            }
+
+            if (dateTimeTakenTimeZone != "")
+            {
+                dateTimeTakenTimeZone = FormatTimezone(dateTimeTakenTimeZone);
+            }
 
             if (dateTimeTaken != "")
             {
@@ -811,28 +833,35 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             }
 
             // Format file datetime to desired format
-            fileCreatedDate = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
-            fileModifiedDate = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
+            fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
+            fileModifiedDate    = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
 
-            // Get Device Make
-            deviceMake = doc.RootElement.TryGetProperty("IFD0:Make", out JsonElement propertyDeviceMake) ? propertyDeviceMake.GetString() : "";
-            deviceModel = doc.RootElement.TryGetProperty("IFD0:Model", out JsonElement propertyDeviceModel) ? propertyDeviceModel.GetString() : "";
+            // Get Device Model and Make (Exif Values)
+            deviceMake  = GetExiftoolValue(doc,"IFD0:Make");
+            deviceModel = GetExiftoolValue(doc,"IFD0:Model");
+
+            // How the Make and Model values differ by device manufacturers. For the database field of "Device", we will use the device name as defined in the ImageDB.DeviceHelper.GetDevice method.
+            // Combining Make and Model into a single field "Device" for presentation purposes.
             device = ImageDB.DeviceHelper.GetDevice(deviceMake, deviceModel);
-            
+
             // Get Geocoordinates
-            stringLatitude = doc.RootElement.TryGetProperty("GPS:GPSLatitude", out JsonElement propertyLatitude) && propertyLatitude.ValueKind == JsonValueKind.String? propertyLatitude.GetString(): "";
-            stringLongitude = doc.RootElement.TryGetProperty("GPS:GPSLongitude", out JsonElement propertyLongitude) && propertyLongitude.ValueKind == JsonValueKind.String ? propertyLongitude.GetString(): "";
-            stringAltitude = doc.RootElement.TryGetProperty("GPS:GPSAltitude", out JsonElement propertyAltitude) && propertyAltitude.ValueKind == JsonValueKind.String ? propertyAltitude.GetString(): "";
+            stringLatitude  = GetExiftoolValue(doc, "GPS:GPSLatitude");
+            stringLongitude = GetExiftoolValue(doc, "GPS:GPSLongitude");
+            stringAltitude  = GetExiftoolValue(doc, "GPS:GPSAltitude");
 
             try
             {
-                latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
-                longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
+                // Round values to 5 decimal places
+                //stringLatitude  = RoundCoordinate(stringLatitude, 5);
+                //stringLongitude = RoundCoordinate(stringLongitude, 5);
+
+                latitude    = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
+                longitude   = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
             }
             catch
             {
-                latitude = null;
-                longitude = null;
+                latitude    = null;
+                longitude   = null;
             }
 
             try
@@ -845,231 +874,88 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             }
 
             // Get GPS Ref
-            if (doc.RootElement.TryGetProperty("GPS:GPSLatitudeRef", out var propertyLatitudeRef) && !string.IsNullOrWhiteSpace(propertyLatitudeRef.GetString()))
-            { latitudeRef = propertyLatitudeRef.GetString().Trim() ?? ""; }
-            
+            latitudeRef = GetExiftoolValue(doc, "GPS:GPSLatitudeRef");
+
             // Change latitude value to negative if latitudeRef is "S"
             if ((latitude != null)&&(latitude>0) && (latitudeRef.Trim().ToUpper()=="S"))
             {
                 latitude = latitude * -1;
             }
-                        
-            if (doc.RootElement.TryGetProperty("GPS:GPSLongitudeRef", out var propertyLongitudeRef) && !string.IsNullOrWhiteSpace(propertyLongitudeRef.GetString()))
-            { longitudeRef = propertyLongitudeRef.GetString().Trim() ?? ""; }
-            
+
+            longitudeRef = GetExiftoolValue(doc, "GPS:GPSLongitudeRef");
+
             // Change longitude value to negative if longitudeRef is "W"
             if ((longitude != null) && (longitude > 0) && (longitudeRef.Trim().ToUpper() == "W"))
             {
                 longitude = longitude * -1;
             }
 
-            // Get Location
-            if (doc.RootElement.TryGetProperty("XMP-iptcCore:Location", out var propertyLocation) && !string.IsNullOrWhiteSpace(propertyLocation.GetString()))
-            { location = propertyLocation.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:Sub-location", out var propertySubLocation) && !string.IsNullOrWhiteSpace(propertySubLocation.GetString()))
-            { location = propertySubLocation.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedSublocation", out var propertySubLocationCreated) && !string.IsNullOrWhiteSpace(propertySubLocationCreated.GetString()))
-            { location = propertySubLocationCreated.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedLocation", out var propertyLocationCreated) && !string.IsNullOrWhiteSpace(propertyLocationCreated.GetString()))
-            { location = propertyLocationCreated.GetString().Trim() ?? ""; }
 
-            // Get City
-            if (doc.RootElement.TryGetProperty("XMP-photoshop:City", out var propertyPhotoshopCity) && !string.IsNullOrWhiteSpace(propertyPhotoshopCity.GetString()))
-            { city = propertyPhotoshopCity.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:City", out var propertyCity) && !string.IsNullOrWhiteSpace(propertyCity.GetString()))
-            { city = propertyCity.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCity", out var propertyLocationCreatedCity) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCity.GetString()))
-            { city = propertyLocationCreatedCity.GetString().Trim() ?? ""; }
+            // Get Geotags
+            // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
+            // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
+            string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedLocation", "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
+            string[] exiftoolCityTags           = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "PTC:City" };
+            string[] exiftoolStateProvinceTags  = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
+            string[] exiftoolCountryTags        = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
+            string[] exiftoolCountryCodeTags    = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
 
-            // Get State-Province
-            if (doc.RootElement.TryGetProperty("XMP-photoshop:State", out var propertyPhotoshopState) && !string.IsNullOrWhiteSpace(propertyPhotoshopState.GetString()))
-            { stateProvince = propertyPhotoshopState.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:Province-State", out var propertyStateProvince) && !string.IsNullOrWhiteSpace(propertyStateProvince.GetString()))
-            { stateProvince = propertyStateProvince.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedProvinceState", out var propertyLocationCreatedStateProvince) && !string.IsNullOrWhiteSpace(propertyLocationCreatedStateProvince.GetString()))
-            { city = propertyLocationCreatedStateProvince.GetString().Trim() ?? ""; }
+            location        = GetExiftoolValue(doc, exiftoolLocationTags);
+            city            = GetExiftoolValue(doc, exiftoolCityTags);
+            stateProvince   = GetExiftoolValue(doc, exiftoolStateProvinceTags);
+            country         = GetExiftoolValue(doc, exiftoolCountryTags);
+            countryCode     = GetExiftoolValue(doc, exiftoolCountryCodeTags);
 
-            // Get Country
-            if (doc.RootElement.TryGetProperty("XMP-photoshop:Country", out var propertyPhotoshopCountry) && !string.IsNullOrWhiteSpace(propertyPhotoshopCountry.GetString()))
-            { country = propertyPhotoshopCountry.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:Country-PrimaryLocationName", out var propertyCountry) && !string.IsNullOrWhiteSpace(propertyCountry.GetString()))
-            { country = propertyCountry.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCountryName", out var propertyLocationCreatedCountry) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountry.GetString()))
-            { country = propertyLocationCreatedCountry.GetString().Trim() ?? ""; }
 
-            // Get Country Code
-            if (doc.RootElement.TryGetProperty("XMP-iptcCore:CountryCode", out var propertyCountryCode) && !string.IsNullOrWhiteSpace(propertyCountryCode.GetString()))
-            { countryCode = propertyCountryCode.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:Country-PrimaryLocationCode", out var propertyIPTCCountryCode) && !string.IsNullOrWhiteSpace(propertyIPTCCountryCode.GetString()))
-            { countryCode = propertyIPTCCountryCode.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedCountryCode", out var propertyLocationCreatedCountryCode) && !string.IsNullOrWhiteSpace(propertyLocationCreatedCountryCode.GetString()))
-            { countryCode = propertyLocationCreatedCountryCode.GetString().Trim() ?? ""; }
 
-            // Get Creator
-            if (doc.RootElement.TryGetProperty("XMP-tiff:Artist", out var propertyTiffArtist) && !string.IsNullOrWhiteSpace(propertyTiffArtist.GetString()))
-            { creator = propertyTiffArtist.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("XMP-dc:Creator", out var propertyCreator) && !string.IsNullOrWhiteSpace(propertyCreator.GetString()))
-            { creator = propertyCreator.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:By-line", out var propertyIPTCByLine) && !string.IsNullOrWhiteSpace(propertyIPTCByLine.GetString()))
-            { creator = propertyIPTCByLine.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IFD0:Artist", out var propertyEXIFArtist) && !string.IsNullOrWhiteSpace(propertyEXIFArtist.GetString()))
-            { creator = propertyEXIFArtist.GetString().Trim() ?? ""; }
+            // Get Creator - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 43
+            creator = GetExiftoolValue(doc, new string[] { "IFD0:Artist", "IPTC:By-line", "XMP-dc:Creator", "XMP-tiff:Artist" });
 
-            // Get Copyright
-            if (doc.RootElement.TryGetProperty("XMP-dc:Rights", out var propertyRights) && !string.IsNullOrWhiteSpace(propertyRights.GetString()))
-            { copyright = propertyRights.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IPTC:CopyrightNotice", out var propertyCopyrightNotice) && !string.IsNullOrWhiteSpace(propertyCopyrightNotice.GetString()))
-            { copyright = propertyCopyrightNotice.GetString().Trim() ?? ""; }
-            if (doc.RootElement.TryGetProperty("IFD0:Copyright", out var propertyCopyright) && !string.IsNullOrWhiteSpace(propertyCopyright.GetString()))
-            { copyright = propertyCopyright.GetString().Trim() ?? ""; }
+            // Get Copyright - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 42
+            copyright = GetExiftoolValue(doc, new string[] { "XMP-dc:Rights", "IPTC:CopyrightNotice", "IFD0:Copyright" });
 
-            // Check if the RegionPersonDisplayName property exists
-            if (doc.RootElement.TryGetProperty("XMP-MP:RegionPersonDisplayName", out JsonElement regionPersonDisplayName))
+
+            //Get People tags/names - Support various schemas for people tags
+
+            // MWG Region Names - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
+            // Microsoft People Tags - Ref: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-people-tagging
+            // IPTC Extension Person In Image - Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#person-shown-in-the-image
+
+            peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage" });
+
+            foreach (var name in peopleTag)
             {
-                // If it's a string
-                if (regionPersonDisplayName.ValueKind == JsonValueKind.String)
-                {
-                    peopleTag.Add(item: regionPersonDisplayName.GetString());
-                }
-                else
-                {
-                    // Iterate over the array
-                    foreach (var name in regionPersonDisplayName.EnumerateArray())
-                    {
-                        peopleTag.Add(item: name.GetString());
-                    }
-                }
-    }
-
-            // Check if the RegionPersonDisplayName property exists
-            if (doc.RootElement.TryGetProperty("XMP-mwg-rs:RegionName", out JsonElement regionName))
-            {
-                // If it's a string
-                if (regionName.ValueKind == JsonValueKind.String)
-                {
-                    peopleTag.Add(item: regionName.GetString());
-                }
-                else
-                {
-                    // Iterate over the array
-                    foreach (var name in regionName.EnumerateArray())
-                    {
-                        peopleTag.Add(item: name.GetString());
-                    }
-                }
-
-            }
-
-            // Check if the PersonInImage property exists
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:PersonInImage", out JsonElement personInImage))
-            {
-                // If it's a string
-                if (personInImage.ValueKind == JsonValueKind.String)
-                {
-                    peopleTag.Add(item: personInImage.GetString());
-                }
-                else
-                {
-                    // Iterate over the array
-                    foreach (var name in personInImage.EnumerateArray())
-                    {
-                        peopleTag.Add(item: name.GetString());
-                    }
-                }
-
-            }
-
-            // Check if the Keyword property exists
-            if (doc.RootElement.TryGetProperty("IPTC:Keywords", out JsonElement keywords))
-            {
-                // If it's a string
-                if (keywords.ValueKind == JsonValueKind.String)
-                {
-                    descriptiveTag.Add(item: keywords.GetString());
-                }
-                else
-                {
-                    // Iterate over the array
-                    foreach (var tag in keywords.EnumerateArray())
-                    {
-                        descriptiveTag.Add(item: tag.GetString());
-                    }
-                }
-            }
-
-            // Check if the Keyword property exists
-            if (doc.RootElement.TryGetProperty("XMP-dc:Subject", out JsonElement subject))
-            {
-                // If it's a string
-                if (subject.ValueKind == JsonValueKind.String)
-                {
-                    descriptiveTag.Add(item: subject.GetString());
-                }
-                else
-                {
-                    // Iterate over the array
-                    foreach (var tag in subject.EnumerateArray())
-                    {
-                        descriptiveTag.Add(item: tag.GetString());
-                    }
-                }
-            }
-
-            // Check if the Keyword property exists
-            if (doc.RootElement.TryGetProperty("IFD0:XPKeywords", out JsonElement xpKeywords))
-            {
-                // If it's a string
-                if (xpKeywords.ValueKind == JsonValueKind.String)
-                {
-                    descriptiveTag.Add(item: xpKeywords.GetString());
-                }
-                else
-                {
-                    // Iterate over the array
-                    foreach (var tag in xpKeywords.EnumerateArray())
-                    {
-                        descriptiveTag.Add(item: tag.GetString());
-                    }
-                }
-            }
-
-            // Check if the Location Identifiers exists
-            if (doc.RootElement.TryGetProperty("XMP-iptcExt:LocationCreatedLocationId", out JsonElement locationId))
-            {
-                    // If it's a string
-                    if (locationId.ValueKind == JsonValueKind.String)
-                    {
-                        locationIdentifier.Add(item: locationId.GetString());
-                    }
-                    else
-                    {
-                        // Iterate over the array
-                        foreach (var tag in locationId.EnumerateArray())
-                        {
-                            locationIdentifier.Add(item: tag.GetString());
-                        }
-                    }
+                var service = new PeopleTagService(dbFiles);
+                await service.AddPeopleTags(name, imageID);
             }
 
 
-                foreach (var name in peopleTag)
-                {
-                    var service = new PeopleTagService(dbFiles);
-                    await service.AddPeopleTags(name, imageID);
-                }
+            // Get Descriptive tags/keywords
+            // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
+            // Also reading legacy Windows XP Exif keyword tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+            descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
 
+            foreach (var tag in descriptiveTag)
+            {
+                var service = new DescriptiveTagService(dbFiles);
+                await service.AddTags(tag, imageID);
+            }
 
-                foreach (var tag in descriptiveTag)
-                {
-                    var service = new DescriptiveTagService(dbFiles);
-                    await service.AddTags(tag, imageID);
-                }
+            // Get IPTC Location Identifiers - Introduced by IPTC in the 2014 IPTC Extension Standard.
+            // The location identifier is a URI that can be used to reference the location in other systems.
+            // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#location-identifier
+            // Ref: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/
+            // When a new location identifier is found, it will be added to the database with the location name of the image.
+            // The location name in table Location can be modified by the user.
 
-                foreach (var locationURI in locationIdentifier)
-                {
-                    var service = new LocationIdService(dbFiles);
-                    await service.AddLocationId(locationURI,location, imageID);
-                }
+            locationIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
+
+            foreach (var locationURI in locationIdentifier)
+            {
+                var service = new LocationIdService(dbFiles);
+                await service.AddLocationId(locationURI, location, imageID);
+            }
+
 
         }
 
@@ -1128,13 +1014,102 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         
 }
 
+
+// Returns a HashSet of values for the specified ExifTool tags
+static HashSet<string> GetExiftoolListValues(JsonDocument doc, string[] exiftoolTags)
+{
+    HashSet<string> exiftoolValues = new HashSet<string>();
+
+    foreach (var tag in exiftoolTags)
+    {
+        // Check if the given region property exists
+        if (doc.RootElement.TryGetProperty(tag, out JsonElement values))
+        {
+            //Note: ExifTool can return a single value or an array of values
+
+            // If it's a string, add it directly to the list
+            if (values.ValueKind == JsonValueKind.String)
+            {
+                exiftoolValues.Add(values.GetString());
+            }
+            else if (values.ValueKind == JsonValueKind.Array)
+            {
+                // If it's an array, iterate over the array and add each value
+                foreach (var name in values.EnumerateArray())
+                {
+                    exiftoolValues.Add(name.GetString());
+                }
+            }
+        }
+    }
+
+    // Return the list of people tags
+    return exiftoolValues;
+}
+
+// Returns the first non-empty value for the specified ExifTool tags
+static string GetExiftoolValue(JsonDocument doc, params string[] exiftoolTags)
+{
+    foreach (var tag in exiftoolTags)
+    {
+        // Call GetExiftoolValue for each property name
+        string value = GetJsonValue(doc, tag);
+
+        // If a non-empty value is found, return it
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+    }
+
+    // If no non-empty value is found, return an empty string
+    return string.Empty;
+}
+
+// Returns the value for the specified ExifTool tag from JSON document
+static string GetJsonValue(JsonDocument doc, string exiftoolTag)
+{
+    if (doc.RootElement.TryGetProperty(exiftoolTag, out var tagValue) && !string.IsNullOrWhiteSpace(tagValue.GetString()))
+    {
+        return tagValue.GetString().Trim();
+    }
+    return string.Empty;
+}
+
+// Convert the date string to the new format "yyyy-MM-dd h:mm:ss tt" or  simple date format "yyyy-MM-dd"
+// Example: "2023:10:01 12:34:56" -> "2023-10-01 12:34:56 PM"
+// Example: "2023:10:01 12:34:56.789" -> "2023-10-01 12:34:56 PM"
+// Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
+// Ref: https://savemetadata.org (Dates)
 static string ConvertDateToNewFormat(string inputDate)
 {
-    // Define the input format
-    string inputFormat = "yyyy:MM:dd HH:mm:ss";
+    // Remove TimeZone (Z = Zulu time)
+    inputDate = inputDate.Replace("Z", "");
+    inputDate = inputDate.Split(new[] { '+', '-' })[0];
 
-    // Parse the input string to a DateTime object
-    if (DateTime.TryParseExact(inputDate, inputFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dateTime))
+    // Handle date formats and replace ":" with "-"
+    if (inputDate.Length == 4) // Year only (e.g., "2014")
+    {
+        return inputDate.Replace(":", "-");
+    }
+    else if (inputDate.Length == 7) // Year and month (e.g., "2014:03")
+    {
+        return inputDate.Replace(":", "-");
+    }
+    else if (inputDate.Length == 10) // Year, month, and day (e.g., "2014:03:04")
+    {
+        return inputDate.Replace(":", "-");
+    }
+
+    // Define the input formats for full date with time
+    string[] inputFormats =
+    {
+        "yyyy:MM:dd HH:mm:ss.fff",  // Full date with time and milliseconds
+        "yyyy:MM:dd HH:mm:ss"      // Full date with time
+    };
+
+    // Try to parse the input string with one of the formats
+    if (DateTime.TryParseExact(inputDate, inputFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dateTime))
     {
         // Convert to the desired format "yyyy-MM-dd h:mm:ss tt"
         return dateTime.ToString("yyyy-MM-dd h:mm:ss tt");
@@ -1153,10 +1128,28 @@ static string GetAlbumName(string photoLibrary, string filePath)
     filePath = filePath.Trim();
     return filePath;
 }
+
+static string RoundCoordinate(string stringCoordinate, int decimalPlaces)
+{
+    // Check if the string is not empty and can be parsed to a decimal
+    if (!string.IsNullOrEmpty(stringCoordinate) && decimal.TryParse(stringCoordinate, out decimal coordinate))
+    {
+        // Round the decimal value to defined decimal places
+        coordinate = Math.Round(coordinate, decimalPlaces);
+        // Return the rounded value as a string
+        return coordinate.ToString("F5");
+    }
+
+    // Return the original string if it's empty or not a valid decimal
+    return stringCoordinate;
+}
 static string FormatTimezone(string input)
 {
     // Remove any extra spaces from the input
     input = input.Trim();
+
+    // Replace "Z" (Zulu Time) with "+00:00" to indicate UTC
+    input = input.Replace("Z", "+00:00");
 
     // If the input contains a colon, remove the seconds part if present (e.g., "-04:00:00" -> "-04:00")
     if (input.Contains(":"))
@@ -1182,15 +1175,22 @@ static string FormatTimezone(string input)
         }
     }
 
+    if (input == "00:00")
+    {
+        return "+00:00";
+    }
+
     // Handle if the input is not a valid number, return as it is
     return input;
 }
 static string GetNormalizedFolderPath(string folderPath)
 {
     folderPath = folderPath.Trim();
-    folderPath = folderPath.Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    folderPath = folderPath.Trim('"');
+    folderPath = folderPath.Trim('\'');
     folderPath = folderPath.TrimEnd('\\');
-    
+    folderPath = folderPath.Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
     // Ensure the folder path is valid and not null or empty
     if (string.IsNullOrEmpty(folderPath))
     {
@@ -1217,7 +1217,7 @@ static string NormalizePathCase(string folderPath)
     {
         return string.Empty;
     }
-    // Get the root drive (e.g., C:\)
+    // Get the photo library path (e.g., C:\)
     string root = Path.GetPathRoot(folderPath);
 
     // Get all directories and the file name if any
