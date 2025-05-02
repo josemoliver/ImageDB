@@ -1,11 +1,12 @@
 # Image Metadata Analysis - Database Loader Tool
-Command line app which will scan the specified folder (or all libraries if no folder is provided) for image files, process the metadata, and update the database accordingly. The app does not modify file metadata, simply reads the metadata leveraging the powerfull exiftool utility and loads it into a SQLite database. The database is meant for users familiar with SQL and photo metadata to analyse the file metadata of their photo collections.
+This command-line tool scans a specified folder (or all libraries if no folder is provided) for image files, and using the powerful ExifTool utility- extracts the metadata, and updates a SQLite database accordingly. It does not alter the file metadata. The tool and database is designed for users with knowledge of SQL and photo metadata, allowing them to analyze the metadata of their photo collections.
+
 
 ## Installation
 
 1. Ensure you have the following prerequisites installed:
    - .NET Core SDK 8
-   - EXIFTool.exe (https://exiftool.org/) - Include the exiftool.exe folder in your system's PATH folder.
+   - EXIFTool.exe installed (https://exiftool.org/) - Include the exiftool.exe folder in your system's PATH folder.
 
 2. Clone the repository:
    ```
@@ -40,15 +41,17 @@ Command line app which will scan the specified folder (or all libraries if no fo
 The Image Database Management Tool provides the following command-line options:
 
 - `--folder`: Specify the path to a specific library to scan. Path must be included in the PhotoLibrary db table.
-- `--mode`: Scan modes - normal (default) | date | quick | reload
+- `--mode`: Operation modes - normal (default) | date | quick | reload
 
-Modes:
+## Operation Modes:
 
-- normal (default) - Scans all files and compares any existing file using SHA1 hash. Slowest scanning mode but the most reliable.
-- date - Scans all files and updates the files based on the file modified date property. Faster scanning but if any file was updated and the file modified date is not, the app will not update the metatada on the db.
-- quick - Scans files based on file modified sorted by descending modified date. If unmodified file if found, the rest are skipped.
-- reload - No scan is performed of the files, existing metadata scans are re-processed at the database level. This mode is useful for updating Image table after any code change.
-  
+| Options         | Description                                             |
+| :------------     | :--------------------------------------------------------- | 
+| `normal`     | (default) Scans all files and compares any existing file using SHA1 hash. Slowest scanning mode but the most reliable.|
+| `date`       | Scans all files and updates the files based on the file modified date property. Faster scanning but if any file was updated and the file modified date is not, the app will not update the metatada on the database. |
+|  `quick` | Scans files based on file modified sorted by descending modified date. If unmodified file if found, the rest are skipped. |
+|  `reload` |No scan is performed of the files, existing metadata scans are re-processed at the database level. This mode is useful for updating  the database tables after any code modification. |
+
 
 To run the tool, use the following command:
 
@@ -79,43 +82,43 @@ Using a SQLlite database management tool, open the database file so you can anal
 | `Tag`  |  Descriptive tags |
 | `relation*`  | These tables maintain the ImageId relationships between tags, location identifiers, and people tags. |
 
-## DB Views:
-The views are meant to assist in your metadata inspection and analysis. For example, identifying field discrepancies, finding duplicate filenames, etc.
-You will note that the exiftool JSON output can be queried using SQLite's Json Query Support - https://sqlite.org/json1.html. Feel free to edit existing ones or create your own.
 
 ## Metadata Table Fields:
-Although all the metadata tags retrieved using Exiftool are recorded into `Metadata` field, some other table values in the database are derived based on those fields for easier presentation.
+Although all the metadata tags retrieved using Exiftool are loaded into `Metadata` field and accessible for queries and views, some other table values in the database are derived based on those fields for easier presentation. If various fields correspond to the same property the first non-empty/null value is used. For example, in the case of Image.Title the order of precedence is "XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle". Other values are derived from merging similar values such as PeopleTag.PersonName or derived from a combination of fields as in the case of Image.Device.
 
 | Table.Column            | Source(s)                            |
 | :------------     | :--------------------------------------------------------- | 
-| `Image.Title`     | XMP-dc:Title,IPTC:ObjectName,IPTC:Headline,IFD0:XPTitle  |
-| `Image.Description`     | XMP-dc:Description,IPTC:Caption-Abstract,IFD0:ImageDescription,ExifIFD:UserComment,XMP-tiff:ImageDescription,IFD0:XPComment |
-| `Image.Album`     | PhotoLibrary subfolder  |
-| `Image.Rating`     | IFD0:Rating,XMP-xmp:Rating  |
-| `Image.DateTimeTaken`     | ExifIFD:DateTimeOriginal,ExifIFD:CreateDate,XMP-photoshop:DateCreated, File Created Date |
-| `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, Date Time (if included) |
-| `Image.Device`     | IFD0:Make and IFD0:Model |
+| `Image.Title`     | XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle  |
+| `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription, IFD0:XPComment, IFD0:XPSubject, or IPTC:Headline |
+| `Image.Album`     | PhotoLibrary subfolder - User added |
+| `Image.Rating`     | XMP-xmp:Rating, or IFD0:Rating |
+| `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
+| `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |
+| `Image.Device`     | Combined from IFD0:Make and IFD0:Model |
 | `Image.Latitude`     | GPS:GPSLatitude and GPS:GPSLatitudeRef |
 | `Image.Longitude`     | GPS:GPSLongitude and GPS:GPSLongitudeRef|
 | `Image.GPSAltitude`     | GPS:GPSAltitude |
-| `Image.Location`     | XMP-iptcExt:LocationCreatedLocation, XMP-iptcExt:LocationCreatedSublocation, IPTC:Sub-location, XMP-iptcCore:Location  |
-| `Image.City`     | XMP-iptcExt:LocationCreatedCity, IPTC:City, XMP-photoshop:City |
-| `Image.StateProvince`     | XMP-iptcExt:LocationCreatedProvinceState, IPTC:Province-State, XMP-photoshop:State  |
-| `Image.Country`     | XMP-iptcExt:LocationCreatedCountryName, IPTC:Country-PrimaryLocationName, XMP-photoshop:Country |
-| `Image.CountryCode`     | XMP-iptcExt:LocationCreatedCountryCode, IPTC:Country-PrimaryLocationCode, XMP-iptcCore:CountryCode  |
-| `Image.Creator`     | IFD0:Artist, IPTC:By-line, XMP-dc:Creator, XMP-tiff:Artist |
-| `Image.Copyright`     | IFD0:Copyright, IPTC:CopyrightNotice, XMP-dc:Rights  |
-| `PeopleTag.PersonName`     | XMP-MP:RegionPersonDisplayName, XMP-mwg-rs:RegionName, XMP-iptcExt:PersonInImage  |
-| `Tag.TagName`     | IPTC:Keywords, XMP-dc:Subject, IFD0:XPKeywords  |
+| `Image.Location`     | XMP-iptcExt:LocationCreatedLocation, XMP-iptcExt:LocationCreatedSublocation, or XMP-iptcCore:Location, IPTC:Sub-location  |
+| `Image.City`     | XMP-iptcExt:LocationCreatedCity, XMP-photoshop:City, or IPTC:City |
+| `Image.StateProvince`     | XMP-iptcExt:LocationCreatedProvinceState, XMP-photoshop:State, or IPTC:Province-State  |
+| `Image.Country`     | XMP-iptcExt:LocationCreatedCountryName, XMP-photoshop:Country or IPTC:Country-PrimaryLocationName |
+| `Image.CountryCode`     | XMP-iptcExt:LocationCreatedCountryCode, XMP-iptcCore:CountryCode or IPTC:Country-PrimaryLocationCode  |
+| `Image.Creator`     | XMP-dc:Creator, IPTC:By-line, IFD0:Artist, XMP-tiff:Artist, or IFD0:XPAuthor |
+| `Image.Copyright`     | XMP-dc:Rights,IPTC:CopyrightNotice, or IFD0:Copyright  |
+| `PeopleTag.PersonName`     | Merged names from XMP-MP:RegionPersonDisplayName, XMP-mwg-rs:RegionName, and XMP-iptcExt:PersonInImage  |
+| `Tag.TagName`     | Merged values from IPTC:Keywords, XMP-dc:Subject, and IFD0:XPKeywords  |
 | `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
 | `Location.LocationName`     | *From first Image.Location found during scan, can be modified afterwards.  |
+
+## DB Views:
+The views are meant to assist in your metadata inspection and analysis. For example, identifying field discrepancies, finding duplicate filenames, etc. You will note that the exiftool JSON output can be queried using SQLite's Json Query Support - https://sqlite.org/json1.html. Feel free to edit existing ones or create your own.
 
 
 ## Additional References:
 - https://savemetadata.org/
 - https://www.exiftool.org/TagNames/index.html
 - https://www.carlseibert.com/blog/
-
+- https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf
 
 
 

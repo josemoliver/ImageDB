@@ -117,6 +117,8 @@ json_extract(Metadata, '$.IPTC:By-line') AS ByLine,
 json_extract(Metadata, '$.XMP-dc:Creator') AS Creator, 
 json_extract(Metadata, '$.XMP-tiff:Artist') AS TiffArtist
 FROM Image;
+CREATE VIEW vDates AS
+SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
 CREATE VIEW vDescriptions AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.XMP-dc:Description') AS Description,
@@ -124,7 +126,8 @@ json_extract(Metadata, '$.IPTC:Caption-Abstract') AS CaptionAbstract,
 json_extract(Metadata, '$.IFD0:ImageDescription') AS ImageDescription, 
 json_extract(Metadata, '$.ExifIFD:UserComment') AS UserComment, 
 json_extract(Metadata, '$.XMP-tiff:ImageDescription') AS TiffImageDescription,
-json_extract(Metadata, '$.IFD0:XPComment') AS XPComment
+json_extract(Metadata, '$.IFD0:XPComment') AS XPComment,
+json_extract(Metadata, '$.IPTC:Headline') AS Headline
 FROM Image;
 CREATE VIEW vDevices AS
 SELECT ImageId,Filepath,Device, 
@@ -140,10 +143,34 @@ SELECT LOWER(Filename) AS Filename, COUNT(*)
 FROM Image
 GROUP BY LOWER(Filename)
 HAVING COUNT(*) > 1;
-CREATE VIEW vLocations AS
+CREATE VIEW vGeotags AS
 SELECT Location,StateProvince,Country,City,AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude 
 FROM Image
 GROUP BY Location,StateProvince,Country,City;
+CREATE VIEW vIPTCDigest AS
+SELECT Filepath, json_extract(Metadata, '$.XMP-photoshop:LegacyIPTCDigest') AS LegacyIPTCDigest,json_extract(Metadata, '$.File:CurrentIPTCDigest') AS CurrentIPTCDigest, Metadata FROM Image WHERE LegacyIPTCDigest IS NOT NULL;
+CREATE VIEW vLegacy_IPTC_IMM AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName,
+json_extract(Metadata, '$.IPTC:Headline') AS Headline,
+json_extract(Metadata, '$.IPTC:Credit') AS Credit,
+json_extract(Metadata, '$.IPTC:Caption-Abstract') AS CaptionAbstract, 
+json_extract(Metadata, '$.IPTC:By-Line') AS Byline,
+json_extract(Metadata, '$.IPTC:By-lineTitle') AS BylineTitle,
+json_extract(Metadata, '$.IPTC:CopyrightNotice') AS CopyrightNotice,
+json_extract(Metadata, '$.IPTC:Contact') AS Contact,
+json_extract(Metadata, '$.IPTC:DateCreated') AS DateCreated, 
+json_extract(Metadata, '$.IPTC:TimeCreated') AS TimeCreated, 
+json_extract(Metadata, '$.IPTC:Sub-location') AS SubLocation,
+json_extract(Metadata, '$.IPTC:Province-State') AS ProvinceState,
+json_extract(Metadata, '$.IPTC:City') AS City,
+json_extract(Metadata, '$.IPTC:Country') AS Country,
+json_extract(Metadata, '$.IPTC:Country-PrimaryLocationCode') AS CountryPrimaryLocationCode,
+json_extract(Metadata, '$.IPTC:Keywords') AS Keywords,
+json_extract(Metadata, '$.IPTC:SpecialInstructions') AS SpecialInstructions,
+json_extract(Metadata, '$.IPTC:Category') AS Category,
+Metadata
+FROM Image;
 CREATE VIEW vMetadataKeys AS
 WITH json_keys AS (
     SELECT 
@@ -164,7 +191,7 @@ GROUP BY
 ORDER BY 
     key_count DESC;
 CREATE VIEW vPhotoDates AS
-SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.IPTC:DateCreated') AS IPTCDate,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS ExifDateTimeOriginal,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTCTime, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPDateTaken, Metadata FROM Image;
+SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Copyright') AS Copyright,
@@ -172,11 +199,23 @@ json_extract(Metadata, '$.IPTC:CopyrightNotice') AS CopyrightNotice,
 json_extract(Metadata, '$.XMP-dc:Rights') AS Rights,
 json_extract(Metadata, '$.XMP-tiff:Copyright') AS TiffCopyright
 FROM Image;
+CREATE VIEW vSaveMetadataDotOrg AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.XMP-dc:Title') AS Title,
+json_extract(Metadata, '$.XMP-dc:Description') AS Description,
+json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS Date,
+json_extract(Metadata, '$.XMP-iptcExt:PersonInImage') AS PersonInImage,
+json_extract(Metadata, '$.XMP-iptcExt:LocationShownLocation') AS Location,
+json_extract(Metadata, '$.XMP-iptcExt:LocationShownCity') AS City,
+json_extract(Metadata, '$.XMP-iptcExt:LocationProvinceState') AS ProvinceState,
+json_extract(Metadata, '$.XMP-iptcExt:LocationShownCountryName') AS CountryName,
+json_extract(Metadata, '$.XMP-iptcExt:LocationShownLocationId') AS LocationId,
+Metadata
+FROM Image;
 CREATE VIEW vTitles AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.XMP-dc:Title') AS Title,
 json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName, 
-json_extract(Metadata, '$.IPTC:Headline') AS Headline, 
 json_extract(Metadata, '$.IFD0:XPTitle') AS XPTitle
 FROM Image;
 COMMIT;
