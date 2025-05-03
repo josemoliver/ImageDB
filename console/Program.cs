@@ -30,6 +30,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ImageDB;
 using System.Text.RegularExpressions;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
+using static System.Formats.Asn1.AsnWriter;
+using System.Threading.Channels;
 
 // ImageDB
 // Source Repo & Documentation: https://github.com/josemoliver/ImageDB
@@ -96,7 +98,7 @@ await rootCommand.InvokeAsync(args);
 
 if (string.IsNullOrEmpty(photoFolderFilter))
 {
-    photoFolderFilter = "";
+    photoFolderFilter = String.Empty;
     Console.WriteLine("[INFO] - No filter applied.");
 }
 else
@@ -111,7 +113,7 @@ foreach (var folder in photoLibrary)
     string photoFolder = folder.Folder.ToString()??"";
     photoFolder = GetNormalizedFolderPath(photoFolder);
 
-    if ((photoFolderFilter == "") || (photoFolder == photoFolderFilter))
+    if ((photoFolderFilter == String.Empty) || (photoFolder == photoFolderFilter))
     {       
 
        //Fetch photoLibraryId
@@ -275,7 +277,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             // Get current file path
             specificFilePath = imagesdbTable.Where(img => img.Filepath == imageFiles[i].FilePath).Select(img => img.Filepath).FirstOrDefault() ?? "";
 
-            if (specificFilePath == "")
+            if (specificFilePath == String.Empty)
             {
                 // File was not found in db, add it
                 SHA1 = getFileSHA1(imageFiles[i].FilePath);        
@@ -478,7 +480,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
             try { elapsedTime = (int)(DateTime.Parse(endDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
 
-            string elapsedTimeComment = "";
+            string elapsedTimeComment = String.Empty;
             if (elapsedTime >= 3600) // Greater than or equal to 1 hour
             {
                 int hours = elapsedTime / 3600;
@@ -544,7 +546,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
             string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
 
-            if (jsonMetadata == "")
+            if (jsonMetadata == String.Empty)
             {
                 // Handle the case where jsonMetadata is empty
                 Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
@@ -600,7 +602,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 
         string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
 
-        if (jsonMetadata == "")
+        if (jsonMetadata == String.Empty)
         {
             // Handle the case where jsonMetadata is empty
             Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
@@ -735,7 +737,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         }
     }
 
-    if (jsonMetadata != "")
+    if (jsonMetadata != String.Empty)
     {             
 
         // Parse the JSON string dynamically into a JsonDocument
@@ -767,11 +769,12 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 //Rating - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
                 rating = GetExiftoolValue(doc, new string[] { "XMP-xmp:Rating", "IFD0:Rating" });
+                rating = NormalizeRatingNumber(rating);
 
             // IV. Image.DateTimeTaken 
 
-                //Get DateTimeTaken - Decending Priority - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
-                string tzDateTime   = "";   // Value which may contain timezone
+            //Get DateTimeTaken - Decending Priority - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
+            string tzDateTime   = String.Empty;   // Value which may contain timezone
 
                 //XMP-photoshop:DateCreated (1st option - Preferred)
                 if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
@@ -780,14 +783,14 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 }
 
                 //ExifIFD:DateTimeOriginal (2nd option)
-                if (dateTimeTaken == "")
+                if (dateTimeTaken == String.Empty)
                 {       
                     if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
                     { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString().Trim()) ?? ""; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
                 }
 
                 //ExifIFD:CreateDate (3rd option)
-                if (dateTimeTaken == "")
+                if (dateTimeTaken == String.Empty)
                 {
                     //ExifIFD:CreateDate
                     if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
@@ -795,26 +798,26 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 }
 
                 // XMP-exif:DateTimeOriginal (4th option)
-                if (dateTimeTaken == "")
+                if (dateTimeTaken == String.Empty)
                 {
                     // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal and ExifIFD:CreateDate over IPTC DateTime as some applications use this.
                     if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
                     { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? "";
-                      if (tzDateTime=="") { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
+                      if (tzDateTime== String.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
                     }
                 }
 
                 // IPTC Date and Time (5th option)
-                if (dateTimeTaken == "")
+                if (dateTimeTaken == String.Empty)
                 {
-                    string iptcDate = "";       // IPTC Date       
-                    string iptcTime = "";       // IPTC Time
-                    string iptcDateTime = "";   // IPTC DateTime
+                    string iptcDate     = String.Empty;   // IPTC Date       
+                    string iptcTime     = String.Empty;   // IPTC Time
+                    string iptcDateTime = String.Empty;   // IPTC DateTime
 
                     iptcDate = GetExiftoolValue(doc, "IPTC:DateCreated");
                     iptcTime = GetExiftoolValue(doc, "IPTC:TimeCreated");
 
-                    if (iptcDate != "")
+                    if (iptcDate != String.Empty)
                     {
                         // Validate the date and time formats
                         string pattern = @"^([01]?[0-9]|2[0-3]):([0-5]?[0-9]):([0-5]?[0-9])([+-](0[0-9]|1[0-3]):([0-5][0-9]))?$";
@@ -836,7 +839,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 }      
            
                 // File system create date (6th option)
-                if (dateTimeTaken=="")
+                if (dateTimeTaken == String.Empty)
                 {
                     // If all else fails to retrieve dateTime from the file metadata.
                     // Not part of the MWG spec - Use the file's system File Creation Date as a last resort for DateTimeTaken.
@@ -855,7 +858,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 }
 
                 // If the OffsetTimeOriginal property is not available, use the XMP DateTimeOriginal or DateTimeCreated property
-                if (dateTimeTakenTimeZone == "")
+                if (dateTimeTakenTimeZone == String.Empty)
                 {
                     if (DateTimeOffset.TryParseExact(tzDateTime, "yyyy:MM:dd HH:mm:sszzz", null, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTimeOffset dateTimeOffset))
                     {
@@ -865,7 +868,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                     }
                 }
 
-                if (dateTimeTakenTimeZone != "")
+                if (dateTimeTakenTimeZone != String.Empty)
                 {
                     dateTimeTakenTimeZone = FormatTimezone(dateTimeTakenTimeZone);
                 }
@@ -1008,7 +1011,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 image.FileModifiedDate          = fileModifiedDate;
 
                 // Update the file path and other properties only when necessary. Not needed when perfoming a metadata reload.
-                if (updatedSHA1 != "")
+                if (updatedSHA1 != String.Empty)
                 {
                     image.Sha1              = updatedSHA1;
                     image.ModifiedBatchId   = batchId;
@@ -1016,19 +1019,18 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 // Save the changes to the database
                 int retryCount = 5;
-                while (retryCount-- > 0)
-                {
-                    try
+                    while (retryCount-- > 0)
                     {
-                        dbFilesUpdate.SaveChanges();
-                        break;
-                    }
-                    catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-                    {
-                        Thread.Sleep(1000); // Wait and retry
-                    }
-                }
-            
+                        try
+                        {
+                            dbFilesUpdate.SaveChanges();
+                            break;
+                        }
+                        catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+                        {
+                            Thread.Sleep(1000); // Wait and retry
+                        }
+                    }            
                 }
             }  
            
@@ -1036,6 +1038,40 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         
 }
 
+static string NormalizeRatingNumber(string inputRatingValue)
+{
+    // Ref https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
+    // "The value -1.0 represents a “reject” rating. If a client is not capable of handling float values, it SHOULD round to the closest integer for display
+    // and MUST only change the value once the user has changed the rating in the UI.Also, clients MAY store integer numbers. If a value is out of the
+    // recommended scope it SHOULD be rounded to closest value.In particular, values > “5.0” SHOULD set to “5.0” as well as all values < “-1.0” SHOULD be set to “-1.0”."
+
+    if (string.IsNullOrWhiteSpace(inputRatingValue.Trim()))
+    {
+        return String.Empty; // Return empty string if input is null or whitespace
+    }
+
+    // Try to parse the string into a decimal value
+    if (decimal.TryParse(inputRatingValue, out decimal number))
+    {
+        // Round the number to the nearest whole number
+        int roundedNumber = (int)Math.Round(number);
+
+        // Ensure the number is within the range of -1 to 5
+        if (roundedNumber > 5)
+        {
+            return "5";
+        }
+        if (roundedNumber < -1)
+        {
+            return "-1";
+        }
+
+        return roundedNumber.ToString();
+    }
+
+    // If the input is not a valid number, return 0 or handle the error as needed
+    return String.Empty;
+}
 
 // Returns a HashSet of values for the specified ExifTool tags
 static HashSet<string> GetExiftoolListValues(JsonDocument doc, string[] exiftoolTags)

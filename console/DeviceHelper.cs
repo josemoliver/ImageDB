@@ -93,10 +93,10 @@ namespace ImageDB
 
             // If device model is empty, return the device make or an empty string
             if (string.IsNullOrWhiteSpace(deviceModel))
-                return deviceMake ?? "";
+                return deviceMake ?? String.Empty;
 
             // If device make is empty, return the device model
-            deviceMake ??= "";
+            deviceMake ??= String.Empty;
 
             // Normalize the device make to uppercase for comparison
             string upperMake = deviceMake.ToUpperInvariant();
@@ -109,7 +109,7 @@ namespace ImageDB
             if (!string.IsNullOrEmpty(deviceMake) &&
                 deviceModel.ToUpperInvariant().Contains(deviceMake.ToUpperInvariant()))
             {
-                deviceMake = "";
+                deviceMake = String.Empty;
             }
 
             foreach (var fix in SpecialFixes)
