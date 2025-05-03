@@ -1,6 +1,7 @@
 # Image Metadata Analysis - Database Loader Tool
 This command-line tool scans a specified folder (or all libraries if no folder is provided) for image files, and using the powerful ExifTool utility- extracts the metadata, and updates a SQLite database accordingly. It does not alter the file metadata. The tool and database is designed for users with knowledge of SQL and photo metadata, allowing them to analyze the metadata of their photo collections.
 
+
 ## Installation
 
 1. Ensure you have the following prerequisites installed:
@@ -88,11 +89,11 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | Table.Column            | Source(s)                            |
 | :------------     | :--------------------------------------------------------- | 
 | `Image.Title`     | XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle  |
-| `Image.Description`     | XMP-dc:Description,IPTC:Caption-Abstract,IFD0:ImageDescription,ExifIFD:UserComment,XMP-tiff:ImageDescription,IFD0:XPComment,IFD0:XPSubject, or IPTC:Headline |
+| `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription,IFD0:XPComment,IFD0:XPSubject, or IPTC:Headline |
 | `Image.Album`     | Derived from the PhotoLibrary subfolder |
 | `Image.Rating`     | XMP-xmp:Rating, or IFD0:Rating |
-| `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal,ExifIFD:CreateDate,XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
-| `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal,or IPTC:TimeCreated   |
+| `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
+| `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |
 | `Image.Device`     | Combined from IFD0:Make and IFD0:Model |
 | `Image.Latitude`     | GPS:GPSLatitude and GPS:GPSLatitudeRef |
 | `Image.Longitude`     | GPS:GPSLongitude and GPS:GPSLongitudeRef|
@@ -111,6 +112,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 
 ## DB Views:
 The views are meant to assist in your metadata inspection and analysis. For example, identifying field discrepancies, finding duplicate filenames, etc. You will note that the exiftool JSON output can be queried using SQLite's Json Query Support - https://sqlite.org/json1.html. Feel free to edit existing ones or create your own.
+
 
 ## Additional References:
 - https://savemetadata.org/
