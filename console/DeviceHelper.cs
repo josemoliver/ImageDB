@@ -101,8 +101,7 @@ namespace ImageDB
             // Normalize the device make to uppercase for comparison
             string upperMake = deviceMake.ToUpperInvariant();
 
-
-            if (deviceMake == upperMake && CameraMakerMap.TryGetValue(upperMake, out var normalized))
+            if (CameraMakerMap.TryGetValue(upperMake, out var normalized))
             {
                 deviceMake = normalized;
             }
@@ -122,9 +121,11 @@ namespace ImageDB
                 }
             }
 
-            return string.IsNullOrEmpty(deviceMake)
+            string result = string.IsNullOrEmpty(deviceMake)
                 ? deviceModel
                 : $"{deviceMake} {deviceModel.Replace(deviceMake + " ", "", StringComparison.OrdinalIgnoreCase)}".Trim();
+
+            return result;
         }
     }
 }

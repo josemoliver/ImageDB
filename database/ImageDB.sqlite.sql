@@ -149,6 +149,15 @@ FROM Image
 GROUP BY Location,StateProvince,Country,City;
 CREATE VIEW vIPTCDigest AS
 SELECT Filepath, json_extract(Metadata, '$.XMP-photoshop:LegacyIPTCDigest') AS LegacyIPTCDigest,json_extract(Metadata, '$.File:CurrentIPTCDigest') AS CurrentIPTCDigest, Metadata FROM Image WHERE LegacyIPTCDigest IS NOT NULL;
+CREATE VIEW vLegacyWindowsXP AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.IFD0:XPTitle') AS XPTitle,
+json_extract(Metadata, '$.IFD0:XPSubject') AS XPSubject,
+json_extract(Metadata, '$.IFD0:XPComment') AS XPComment,
+json_extract(Metadata, '$.IFD0:XPAuthor') AS XPAuthor,
+json_extract(Metadata, '$.IFD0:XPKeywords') AS XPKeywords,
+Metadata
+FROM Image;
 CREATE VIEW vLegacy_IPTC_IMM AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName,
@@ -217,5 +226,12 @@ SELECT ImageId,Filepath,
 json_extract(Metadata, '$.XMP-dc:Title') AS Title,
 json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName, 
 json_extract(Metadata, '$.IFD0:XPTitle') AS XPTitle
+FROM Image;
+CREATE VIEW vWeatherTags AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.ExifIFD:AmbientTemperature') AS AmbientTemperature,
+json_extract(Metadata, '$.ExifIFD:Humidity') AS Humidity,
+json_extract(Metadata, '$.ExifIFD:Pressure') AS Pressure,
+Metadata
 FROM Image;
 COMMIT;
