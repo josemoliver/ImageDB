@@ -89,8 +89,8 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | Table.Column            | Source(s)                            |
 | :------------     | :--------------------------------------------------------- | 
 | `Image.Title`     | XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle  |
-| `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription, IFD0:XPComment, IFD0:XPSubject, or IPTC:Headline |
-| `Image.Album`     | PhotoLibrary subfolder - User added |
+| `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription,IFD0:XPComment,IFD0:XPSubject, or IPTC:Headline |
+| `Image.Album`     | Derived from the PhotoLibrary subfolder |
 | `Image.Rating`     | XMP-xmp:Rating, or IFD0:Rating |
 | `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
 | `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |

@@ -93,16 +93,15 @@ namespace ImageDB
 
             // If device model is empty, return the device make or an empty string
             if (string.IsNullOrWhiteSpace(deviceModel))
-                return deviceMake ?? "";
+                return deviceMake ?? String.Empty;
 
             // If device make is empty, return the device model
-            deviceMake ??= "";
+            deviceMake ??= String.Empty;
 
             // Normalize the device make to uppercase for comparison
             string upperMake = deviceMake.ToUpperInvariant();
 
-
-            if (deviceMake == upperMake && CameraMakerMap.TryGetValue(upperMake, out var normalized))
+            if (CameraMakerMap.TryGetValue(upperMake, out var normalized))
             {
                 deviceMake = normalized;
             }
@@ -110,7 +109,7 @@ namespace ImageDB
             if (!string.IsNullOrEmpty(deviceMake) &&
                 deviceModel.ToUpperInvariant().Contains(deviceMake.ToUpperInvariant()))
             {
-                deviceMake = "";
+                deviceMake = String.Empty;
             }
 
             foreach (var fix in SpecialFixes)
@@ -122,9 +121,11 @@ namespace ImageDB
                 }
             }
 
-            return string.IsNullOrEmpty(deviceMake)
+            string result = string.IsNullOrEmpty(deviceMake)
                 ? deviceModel
                 : $"{deviceMake} {deviceModel.Replace(deviceMake + " ", "", StringComparison.OrdinalIgnoreCase)}".Trim();
+
+            return result;
         }
     }
 }
