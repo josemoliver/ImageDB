@@ -41,15 +41,18 @@ using System.Threading.Channels;
 
 var rootCommand = new RootCommand
 {
-    new Option<string>(
-        "--folder",
-        description: "Path to specific library to scan."
+   new Option<string>(
+        "--mode",
+        description: "(Required) Operation modes [ normal | date | quick | reload ]"
     ),
     new Option<string>(
-        "--mode",
-        description: "Set modes: normal (default) | date | quick | reload"
+        "--folder",
+        description: "(Optional) Specify the path to a specific library to scan. Path must be included in the PhotoLibrary db table. Leaving value empty will run through all library folders."
     )
 };
+
+//DEBUG: Uncomment the following line to run the DeviceHelper Test
+//DeviceHelper.RunTest();return 0;
 
 
 using var db = new CDatabaseImageDBsqliteContext();
@@ -60,9 +63,23 @@ bool reloadMetadata         = false;
 bool quickScan              = false;
 bool dateScan               = false;
 
+Console.WriteLine("ImageDB - Scan and update your photo library.");
+Console.WriteLine("---------------------------------------------");
+Console.WriteLine("Code and Info: https://github.com/josemoliver/ImageDB");
+Console.WriteLine("Leveraging the Exiftool utility written by Phil Harvey - https://exiftool.org");
+Console.WriteLine("");
+
 // Handler to process the command-line arguments
 rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
 {
+    mode = mode?.ToLowerInvariant() ?? string.Empty;
+
+    if (((mode == null) || (mode == String.Empty))&&(((mode == "normal") || (mode == "date") || (mode == "quick") || (mode == "reload")) == false))
+    {
+        Console.WriteLine("[ERROR] - Invalid or no mode provided. Use --mode [ normal | date | quick | reload ].");
+        Environment.Exit(1);
+    }
+
     // Get filter photo path, if any.
     photoFolderFilter = folder;
 
@@ -149,7 +166,7 @@ void SetScanMode(string mode)
     dateScan = false;
     quickScan = false;
     
-    if (string.IsNullOrEmpty(mode) || string.Equals(mode, "normal", StringComparison.OrdinalIgnoreCase))
+    if (string.Equals(mode, "normal", StringComparison.OrdinalIgnoreCase))
     {
         Console.WriteLine("[MODE] - Integrity scan for new and updated files.");
     }
@@ -1069,7 +1086,7 @@ static string NormalizeRatingNumber(string inputRatingValue)
         return roundedNumber.ToString();
     }
 
-    // If the input is not a valid number, return 0 or handle the error as needed
+    // If the input is not a valid number, return empty string.
     return String.Empty;
 }
 
@@ -1313,7 +1330,7 @@ static string NormalizePathCase(string folderPath)
 
 static string getFileSHA1(string filepath)
 {
-    const int bufferSize = 8192; // 8KB buffer size, you can adjust as needed
+    const int bufferSize = 8192; // 8KB buffer size
 
     using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize))
     using (SHA1 sha = SHA1.Create())

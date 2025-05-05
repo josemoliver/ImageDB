@@ -28,20 +28,22 @@ This command-line tool scans a specified folder (or all libraries if no folder i
    dotnet build
    ```
 
-## Usage
+## Setup and Usage
 
 1. Use a SQLite Database Editor such as SQLite DB Browser (https://sqlitebrowser.org/). 
 2. Create SQLite Database by running the database\ImageDB.sqlite.sql file.
+2. Add Indexes to the table by running database\ImageDB_Indexes.sqlite.sql
 3. Update the appsettings.json file with the path of your SQLite database file. You can also include folder paths to ingore. For example, some database management tools may create temp folders for deleted files you may wish not to include in the database. 
 4. Open database and add your photo collection folders to the PhotoLibrary table. For example, you may have a divided your photo collections into folders based on Years.
 5. Ensure exiftool.exe is properly installed and included in your system's PATH environment variable.
-6. Run ImageDB.exe
+6. Run ImageDB.exe refer to the options.
 
 
 The Image Database Management Tool provides the following command-line options:
 
-- `--folder`: Specify the path to a specific library to scan. Path must be included in the PhotoLibrary db table.
-- `--mode`: Operation modes - normal (default) | date | quick | reload
+- `--mode`: (Required) Operation modes [ normal | date | quick | reload ]
+- `--folder`: (Optional) Specify the path to a specific library to scan. Paths must be included in the PhotoLibrary db table. Leaving value empty will run through all library folders.
+
 
 ## Operation Modes:
 
