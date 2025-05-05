@@ -49,7 +49,7 @@ The Image Database Management Tool provides the following command-line options:
 
 | Options         | Description                                             |
 | :------------     | :--------------------------------------------------------- | 
-| `normal`     | (default) Scans all files and compares any existing file using SHA1 hash. Slowest scanning mode but the most reliable.|
+| `normal`     | Scans all files and compares any existing file using SHA1 hash. Slowest scanning mode but the most reliable.|
 | `date`       | Scans all files and updates the files based on the file modified date property. Faster scanning but if any file was updated and the file modified date is not, the app will not update the metatada on the database. |
 |  `quick` | Scans files based on file modified sorted by descending modified date. If unmodified file if found, the rest are skipped. |
 |  `reload` |No scan is performed of the files, existing metadata scans are re-processed at the database level. This mode is useful for updating  the database tables after any code modification. |
