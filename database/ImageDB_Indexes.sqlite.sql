@@ -1,0 +1,5 @@
+CREATE INDEX idx_image_id ON Image(ImageId)
+CREATE INDEX idx_metadata_history_image_id ON MetadataHistory(ImageId)
+CREATE INDEX idx_metadata_history_history_id ON MetadataHistory(HistoryId)
+CREATE INDEX idx_image_record_modified ON Image(RecordModified)
+CREATE INDEX idx_image_filepath ON Image(Filepath)

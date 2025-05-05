@@ -14,102 +14,13 @@ CREATE TABLE IF NOT EXISTS "Batch" (
 	"Comment"	TEXT,
 	PRIMARY KEY("BatchID" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Image" (
-	"ImageId"	INTEGER,
-	"PhotoLibraryId"	INTEGER,
-	"Filepath"	TEXT UNIQUE,
-	"Album"	TEXT,
-	"SHA1"	TEXT,
-	"Format"	TEXT,
-	"Filename"	TEXT,
-	"Filesize"	TEXT,
-	"FileCreatedDate"	TEXT,
-	"FileModifiedDate"	TEXT,
-	"Title"	TEXT,
-	"Description"	TEXT,
-	"Rating"	TEXT,
-	"DateTimeTaken"	TEXT,
-	"DateTimeTakenTimeZone"	TEXT,
-	"Device"	TEXT,
-	"Latitude"	NUMERIC,
-	"Longitude"	NUMERIC,
-	"Altitude"	NUMERIC,
-	"Location"	TEXT,
-	"City"	TEXT,
-	"StateProvince"	TEXT,
-	"Country"	TEXT,
-	"CountryCode"	TEXT,
-	"Creator"	TEXT,
-	"Copyright"	TEXT,
-	"Metadata"	TEXT,
-	"RecordAdded"	TEXT,
-	"AddedBatchId"	INTEGER,
-	"RecordModified"	TEXT,
-	"ModifiedBatchId"	INTEGER,
-	PRIMARY KEY("ImageId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Location" (
-	"LocationId"	INTEGER,
-	"LocationIdentifier"	TEXT,
-	"LocationName"	TEXT,
-	"Latitude"	TEXT,
-	"Longitude"	TEXT,
-	PRIMARY KEY("LocationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Log" (
-	"LogEntryId"	INTEGER,
-	"Datetime"	TEXT,
-	"BatchID"	INTEGER,
-	"Filepath"	TEXT,
-	"LogEntry"	TEXT,
-	PRIMARY KEY("LogEntryId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "MetadataHistory" (
-	"HistoryId"	INTEGER,
-	"ImageId"	INTEGER,
-	"Filepath"	TEXT,
-	"AddedBatchId"	INTEGER,
-	"RecordAdded"	TEXT,
-	"ModifiedBatchId"	INTEGER,
-	"RecordModified"	TEXT,
-	"Metadata"	TEXT,
-	PRIMARY KEY("HistoryId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "PeopleTag" (
-	"PeopleTagId"	INTEGER,
-	"PersonName"	TEXT UNIQUE,
-	"FSId"	TEXT,
-	PRIMARY KEY("PeopleTagId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "PhotoLibrary" (
-	"PhotoLibraryId"	INTEGER,
-	"Folder"	TEXT NOT NULL,
-	PRIMARY KEY("PhotoLibraryId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "Tag" (
-	"TagId"	INTEGER,
-	"TagName"	TEXT UNIQUE,
-	"Source"	INTEGER,
-	PRIMARY KEY("TagId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationLocation" (
-	"LocationRelationId"	INTEGER,
-	"ImageId"	INTEGER,
-	"LocationId"	INTEGER,
-	PRIMARY KEY("LocationRelationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationPeopleTag" (
-	"PeopleRelationId"	INTEGER,
-	"ImageId"	INTEGER,
-	"PeopleTagId"	INTEGER,
-	PRIMARY KEY("PeopleRelationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationTag" (
-	"RelationTagId"	INTEGER,
-	"ImageId"	INTEGER,
-	"TagId"	INTEGER,
-	PRIMARY KEY("RelationTagId" AUTOINCREMENT)
-);
+CREATE VIEW PeopleTagCount
+AS 
+select PeopleTag.PersonName, PeopleTag.PeopleTagID, COUNT(relationPeopleTag.PeopleTagId) AS 'FaceCount' 
+from PeopleTag 
+LEFT JOIN relationPeopleTag on relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
+GROUP BY PeopleTag.PersonName
+ORDER BY FaceCount DESC;
 CREATE VIEW vCreator AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Artist') AS Artist,
@@ -144,7 +55,7 @@ FROM Image
 GROUP BY LOWER(Filename)
 HAVING COUNT(*) > 1;
 CREATE VIEW vGeotags AS
-SELECT Location,StateProvince,Country,City,AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude 
+SELECT Location,StateProvince,Country,City,AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude, Count(ImageId) AS FileCount
 FROM Image
 GROUP BY Location,StateProvince,Country,City;
 CREATE VIEW vIPTCDigest AS
@@ -199,8 +110,53 @@ GROUP BY
     json_key
 ORDER BY 
     key_count DESC;
+CREATE VIEW vMetadataModificationComparison AS
+WITH PrevMetadata AS (
+    SELECT
+        mh.ImageId,
+        mh.Metadata AS PrevMetadata,
+        mh.HistoryId
+    FROM
+        MetadataHistory mh
+    WHERE
+        mh.HistoryId = (
+            SELECT MAX(HistoryId)
+            FROM MetadataHistory
+            WHERE ImageId = mh.ImageId
+            AND HistoryId < (
+                SELECT MAX(HistoryId)
+                FROM MetadataHistory
+                WHERE ImageId = mh.ImageId
+            )
+        )
+)
+SELECT
+    i.ImageId,i.Filepath,
+    i.Metadata AS CurrentMetadata,
+    pm.PrevMetadata
+FROM
+    Image i
+LEFT JOIN
+    PrevMetadata pm
+    ON i.ImageId = pm.ImageId
+WHERE
+    i.RecordModified >= datetime('now', '-7 days')  -- Filter for the last week
+    AND i.RecordModified IS NOT NULL
+ORDER BY
+    i.RecordModified DESC;
+CREATE VIEW vMissingGeotags AS
+SELECT Filepath, Latitude,Longitude Location,StateProvince,Country,City
+FROM Image
+WHERE length(Location)=0 AND length(StateProvince)=0 AND length(Country)=0 AND length(City)=0;
 CREATE VIEW vPhotoDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
+CREATE VIEW vRatingCounts AS
+select Rating, Count(ImageId) As ImageCount from Image
+GROUP BY Rating;
+CREATE VIEW vRecentlyModified AS
+SELECT Filepath,FileModifiedDate, Metadata
+FROM Image
+ORDER BY FileModifiedDate DESC;
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Copyright') AS Copyright,
