@@ -32,6 +32,7 @@ using System.Text.RegularExpressions;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 using static System.Formats.Asn1.AsnWriter;
 using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 
 // ImageDB
 // Source Repo & Documentation: https://github.com/josemoliver/ImageDB
@@ -59,6 +60,7 @@ using var db = new CDatabaseImageDBsqliteContext();
 
 var photoLibrary            = db.PhotoLibraries.ToList();
 string photoFolderFilter    = string.Empty;
+string operationMode        = string.Empty;
 bool reloadMetadata         = false;
 bool quickScan              = false;
 bool dateScan               = false;
@@ -72,23 +74,38 @@ Console.WriteLine("");
 // Handler to process the command-line arguments
 rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
 {
-    mode = mode?.ToLowerInvariant() ?? string.Empty;
-
-    if (((mode == null) || (mode == String.Empty))&&(((mode == "normal") || (mode == "date") || (mode == "quick") || (mode == "reload")) == false))
-    {
-        Console.WriteLine("[ERROR] - Invalid or no mode provided. Use --mode [ normal | date | quick | reload ].");
-        Environment.Exit(1);
-    }
+    // Set the operation mode based on the input
+    operationMode = mode?.ToLowerInvariant() ?? string.Empty;
 
     // Get filter photo path, if any.
     photoFolderFilter = folder;
 
+    return Task.CompletedTask;
+});
+
+// Parse and invoke the command
+await rootCommand.InvokeAsync(args);
+
+if (((operationMode == "normal") || (operationMode == "date") || (operationMode == "quick") || (operationMode == "reload")) == true)
+{
+    if (string.IsNullOrEmpty(photoFolderFilter))
+    {
+        photoFolderFilter = String.Empty;
+        Console.WriteLine("[INFO] - No filter applied.");
+    }
+    else
+    {
+        photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
+        Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
+    }
+
+
     // Determine the mode and set appropriate flags
-    reloadMetadata = string.Equals(mode, "reload", StringComparison.OrdinalIgnoreCase);
+    reloadMetadata = string.Equals(operationMode, "reload", StringComparison.OrdinalIgnoreCase);
 
     if (reloadMetadata)
     {
-        Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");   
+        Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");
     }
     else
     {
@@ -99,46 +116,27 @@ rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
         }
 
         // Set scan modes based on the provided mode
-        SetScanMode(mode);
+        SetScanMode(operationMode);
 
         Console.WriteLine("[START] - Scanning for new and updated files.");
 
     }
 
-    return Task.CompletedTask;
-});
+    foreach (var folder in photoLibrary)
+    {
+        //Normalize Folder Path
+        string photoFolder = folder.Folder.ToString() ?? "";
+        photoFolder = GetNormalizedFolderPath(photoFolder);
 
-
-// Parse and invoke the command
-await rootCommand.InvokeAsync(args);
-
-
-if (string.IsNullOrEmpty(photoFolderFilter))
-{
-    photoFolderFilter = String.Empty;
-    Console.WriteLine("[INFO] - No filter applied.");
-}
-else
-{
-    photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
-    Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
-}
-
-foreach (var folder in photoLibrary)
-{
-    //Normalize Folder Path
-    string photoFolder = folder.Folder.ToString()??"";
-    photoFolder = GetNormalizedFolderPath(photoFolder);
-
-    if ((photoFolderFilter == String.Empty) || (photoFolder == photoFolderFilter))
-    {       
-
-       //Fetch photoLibraryId
-       int photoLibraryId = 0;
-       photoLibraryId = photoLibrary.FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))?.PhotoLibraryId ?? 0;
-
-        if (photoLibraryId != 0)
+        if ((photoFolderFilter == String.Empty) || (photoFolder == photoFolderFilter))
         {
+
+            //Fetch photoLibraryId
+            int photoLibraryId = 0;
+            photoLibraryId = photoLibrary.FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))?.PhotoLibraryId ?? 0;
+
+            if (photoLibraryId != 0)
+            {
                 if (reloadMetadata == true)
                 {
                     Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
@@ -149,15 +147,29 @@ foreach (var folder in photoLibrary)
                     Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
                     ScanFiles(photoFolder, photoLibraryId);
                 }
-        }        
+            }
+        }
     }
+
+    if (reloadMetadata == false)
+    {
+        // Shutdown ExifTool process
+        ExifToolHelper.Shutdown();
+    }
+
+    // Exit the application
+    Environment.Exit(0);
+}
+else
+{
+    Console.WriteLine("[ERROR] - Invalid mode. Use [ normal | date | quick | reload ]");
+    Environment.Exit(1);
 }
 
-if (reloadMetadata == false)
-{
-    // Shutdown ExifTool process
-    ExifToolHelper.Shutdown();
-}
+
+
+
+
 
 // Method to set the scan mode based on the input
 void SetScanMode(string mode)
