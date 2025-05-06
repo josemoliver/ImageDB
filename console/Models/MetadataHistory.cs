@@ -22,4 +22,6 @@ public partial class MetadataHistory
     public string RecordModified { get; set; }
 
     public string Metadata { get; set; }
+    
+    public string RegionMetadata { get; set; }
 }

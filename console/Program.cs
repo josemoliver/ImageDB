@@ -562,7 +562,9 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
 async void UpdateImage(int imageId, string updatedSHA1, int batchID)
 {
-    string specificFilePath = string.Empty;
+    string specificFilePath     = String.Empty;
+    string jsonMetadata         = String.Empty;
+    string regionJsonMetadata   = String.Empty;
     // Find the image by ImageId
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -573,7 +575,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
         {
             specificFilePath = image.Filepath;
             //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
-            string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
+            jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath,"");
 
             if (jsonMetadata == String.Empty)
             {
@@ -581,6 +583,12 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
                 Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
                 LogEntry(-1, specificFilePath, "No metadata found for the file.");
                 throw new ArgumentException("No metadata found for the file.");
+            }
+
+            // Check if the file has regions
+            if (jsonMetadata.Contains("XMP-mwg-rs:Region"))
+            {
+                regionJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "regions");
             }
 
             // Get the file size and creation/modification dates
@@ -594,6 +602,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.FileCreatedDate   = fileDateCreated;
             image.FileModifiedDate  = fileDateModified;
             image.Metadata          = jsonMetadata;
+            image.RegionMetadata    = regionJsonMetadata;
             image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
 
             // Save changes to the database
@@ -618,8 +627,10 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
 
 async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
 {
-    int imageId = 0;
-    
+    int imageId                 = 0;
+    string jsonMetadata         = String.Empty;
+    string regionJsonMetadata   = String.Empty;
+
     // Dictionary to map file extensions to normalized values
     var extensionMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -629,7 +640,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             { "heic", "heic" }
     };
 
-        string jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath);
+        jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath,"");
 
         if (jsonMetadata == String.Empty)
         {
@@ -637,8 +648,13 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
             LogEntry(-1, specificFilePath, "No metadata found for the file.");
             throw new ArgumentException("No metadata found for the file.");
-        }       
+        }
 
+        // Check if the file has regions
+        if (jsonMetadata.Contains("XMP-mwg-rs:Region"))
+        {
+            regionJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath,"regions");
+        }
 
         // Normalize the file extension
         fileExtension = fileExtension.Replace(".", "").ToLowerInvariant();
@@ -662,6 +678,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
                 Filesize = fileSize.ToString(),
 
                 Metadata = jsonMetadata,
+                RegionMetadata = regionJsonMetadata,
                 RecordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt")
             };
 
@@ -690,7 +707,8 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 {
         // Initialize variables for metadata extraction
-        string jsonMetadata             = String.Empty; 
+        string jsonMetadata             = String.Empty;
+        string regionJsonMetadata       = String.Empty;
         string title                    = String.Empty;
         string description              = String.Empty;
         string rating                   = String.Empty;
@@ -727,7 +745,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
         jsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.Metadata).FirstOrDefault() ?? "";
-     
+        regionJsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.RegionMetadata).FirstOrDefault() ?? "";
 
         //Delete record PeopleTags from db
         bool tagsFound = false;
@@ -977,25 +995,55 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage" });
 
+                var servicePeopleTags = new PeopleTagService(dbFiles);
                 foreach (var name in peopleTag)
-                {
-                    var service = new PeopleTagService(dbFiles);
-                    await service.AddPeopleTags(name, imageID);
+                {         
+                    await servicePeopleTags.AddPeopleTags(name, imageID);
                 }
 
-            // XII. Get Descriptive tags/keywords
 
-                // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
-                // Also reading legacy Windows XP Exif keyword tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-                descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
 
+            // XII. Get MWG Regions - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
+
+            // Retrieve regions to delete
+            var regionsToDelete = dbFiles.Regions.Where(r => r.ImageId == imageID).ToList();
+
+            if (regionsToDelete.Count > 0)
+            {
+                dbFiles.Regions.RemoveRange(regionsToDelete);
+
+                // Save changes to commit the deletion
+                dbFiles.SaveChanges();
+            }
+
+            if (regionJsonMetadata!=String.Empty)
+            {
+                MWGRegion.Region regions = JsonSerializer.Deserialize<MWGRegion.Region>(regionJsonMetadata, new JsonSerializerOptions{PropertyNameCaseInsensitive = true});
+
+                if ((regions!=null)&&(regions.RegionInfo.RegionList!=null))
+                { 
+                    var serviceRegions = new RegionService(dbFiles);
+                    foreach (var reg in regions.RegionInfo.RegionList)
+                    {
+                        await serviceRegions.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                    }
+                }
+            
+            }
+
+            // XIII. Get Descriptive tags/keywords
+
+            // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
+            // Also reading legacy Windows XP Exif keyword tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+            descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
+
+                var serviceDescriptiveTags = new DescriptiveTagService(dbFiles);
                 foreach (var tag in descriptiveTag)
                 {
-                    var service = new DescriptiveTagService(dbFiles);
-                    await service.AddTags(tag, imageID);
+                    await serviceDescriptiveTags.AddTags(tag, imageID);
                 }
 
-            // XIII. Get IPTC Location Identifiers - Introduced by IPTC in the 2014 IPTC Extension Standard.
+            // XIV. Get IPTC Location Identifiers - Introduced by IPTC in the 2014 IPTC Extension Standard.
 
                 // The location identifier is a URI that can be used to reference the location in other systems.
                 // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#location-identifier
@@ -1005,10 +1053,10 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 locationIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
 
+                var serviceLocations = new LocationIdService(dbFiles);
                 foreach (var locationURI in locationIdentifier)
                 {
-                    var service = new LocationIdService(dbFiles);
-                    await service.AddLocationId(locationURI, location, imageID);
+                       await serviceLocations.AddLocationId(locationURI, location, imageID);
                 }
 
         }
@@ -1132,6 +1180,35 @@ static HashSet<string> GetExiftoolListValues(JsonDocument doc, string[] exiftool
 
     // Return the list of people tags
     return exiftoolValues;
+}
+
+static string[] GetStringExiftoolListValues(JsonDocument doc, string[] exiftoolTags)
+{
+    List<string> exiftoolValues = new();
+
+    foreach (var tag in exiftoolTags)
+    {
+        // Check if the given property exists
+        if (doc.RootElement.TryGetProperty(tag, out JsonElement values))
+        {
+            // If it's a string, add it directly to the list
+            if (values.ValueKind == JsonValueKind.String)
+            {
+                exiftoolValues.Add(values.GetString());
+            }
+            else if (values.ValueKind == JsonValueKind.Array)
+            {
+                // If it's an array, iterate over the array and add each value
+                foreach (var name in values.EnumerateArray())
+                {
+                    if (name.ValueKind == JsonValueKind.String)
+                        exiftoolValues.Add(name.GetString());
+                }
+            }
+        }
+    }
+
+    return exiftoolValues.ToArray();
 }
 
 // Returns the first non-empty value for the specified ExifTool tags
@@ -1370,6 +1447,7 @@ static void CopyImageToMetadataHistory(int imageId)
             ImageId         = image.ImageId,
             Filepath        = image.Filepath,
             Metadata        = image.Metadata,
+            RegionMetadata  = image.RegionMetadata,
             RecordAdded     = image.RecordAdded,
             AddedBatchId    = image.AddedBatchId,
             RecordModified  = image.RecordModified,

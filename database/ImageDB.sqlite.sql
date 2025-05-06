@@ -14,6 +14,116 @@ CREATE TABLE IF NOT EXISTS "Batch" (
 	"Comment"	TEXT,
 	PRIMARY KEY("BatchID" AUTOINCREMENT)
 );
+CREATE TABLE IF NOT EXISTS "Image" (
+	"ImageId"	INTEGER,
+	"PhotoLibraryId"	INTEGER,
+	"Filepath"	TEXT UNIQUE,
+	"Album"	TEXT,
+	"SHA1"	TEXT,
+	"Format"	TEXT,
+	"Filename"	TEXT,
+	"Filesize"	TEXT,
+	"FileCreatedDate"	TEXT,
+	"FileModifiedDate"	TEXT,
+	"Title"	TEXT,
+	"Description"	TEXT,
+	"Rating"	TEXT,
+	"DateTimeTaken"	TEXT,
+	"DateTimeTakenTimeZone"	TEXT,
+	"Device"	TEXT,
+	"Latitude"	NUMERIC,
+	"Longitude"	NUMERIC,
+	"Altitude"	NUMERIC,
+	"Location"	TEXT,
+	"City"	TEXT,
+	"StateProvince"	TEXT,
+	"Country"	TEXT,
+	"CountryCode"	TEXT,
+	"Creator"	TEXT,
+	"Copyright"	TEXT,
+	"Metadata"	TEXT,
+	"RegionMetadata"	TEXT,
+	"RecordAdded"	TEXT,
+	"AddedBatchId"	INTEGER,
+	"RecordModified"	TEXT,
+	"ModifiedBatchId"	INTEGER,
+	PRIMARY KEY("ImageId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "Location" (
+	"LocationId"	INTEGER,
+	"LocationIdentifier"	TEXT,
+	"LocationName"	TEXT,
+	"Latitude"	TEXT,
+	"Longitude"	TEXT,
+	PRIMARY KEY("LocationId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "Log" (
+	"LogEntryId"	INTEGER,
+	"Datetime"	TEXT,
+	"BatchID"	INTEGER,
+	"Filepath"	TEXT,
+	"LogEntry"	TEXT,
+	PRIMARY KEY("LogEntryId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "MetadataHistory" (
+	"HistoryId"	INTEGER,
+	"ImageId"	INTEGER,
+	"Filepath"	TEXT,
+	"AddedBatchId"	INTEGER,
+	"RecordAdded"	TEXT,
+	"ModifiedBatchId"	INTEGER,
+	"RecordModified"	TEXT,
+	"Metadata"	TEXT,
+	"RegionMetadata"	TEXT,
+	PRIMARY KEY("HistoryId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "PeopleTag" (
+	"PeopleTagId"	INTEGER,
+	"PersonName"	TEXT UNIQUE,
+	"FSId"	TEXT,
+	PRIMARY KEY("PeopleTagId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "PhotoLibrary" (
+	"PhotoLibraryId"	INTEGER,
+	"Folder"	TEXT NOT NULL,
+	PRIMARY KEY("PhotoLibraryId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "Region" (
+	"RegionId"	TEXT,
+	"ImageId"	INTEGER NOT NULL,
+	"RegionName"	TEXT,
+	"RegionType"	TEXT,
+	"RegionAreaUnit"	TEXT,
+	"RegionAreaH"	NUMERIC,
+	"RegionAreaW"	NUMERIC,
+	"RegionAreaX"	NUMERIC,
+	"RegionAreaY"	NUMERIC,
+	PRIMARY KEY("RegionId")
+);
+CREATE TABLE IF NOT EXISTS "Tag" (
+	"TagId"	INTEGER,
+	"TagName"	TEXT UNIQUE,
+	"Source"	INTEGER,
+	PRIMARY KEY("TagId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "relationLocation" (
+	"LocationRelationId"	INTEGER,
+	"ImageId"	INTEGER,
+	"LocationId"	INTEGER,
+	PRIMARY KEY("LocationRelationId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "relationPeopleTag" (
+	"PeopleRelationId"	INTEGER,
+	"ImageId"	INTEGER,
+	"PeopleTagId"	INTEGER,
+	PRIMARY KEY("PeopleRelationId" AUTOINCREMENT)
+);
+CREATE TABLE IF NOT EXISTS "relationTag" (
+	"RelationTagId"	INTEGER,
+	"ImageId"	INTEGER,
+	"TagId"	INTEGER,
+	PRIMARY KEY("RelationTagId" AUTOINCREMENT)
+);
 CREATE VIEW PeopleTagCount
 AS 
 select PeopleTag.PersonName, PeopleTag.PeopleTagID, COUNT(relationPeopleTag.PeopleTagId) AS 'FaceCount' 
@@ -54,6 +164,14 @@ SELECT LOWER(Filename) AS Filename, COUNT(*)
 FROM Image
 GROUP BY LOWER(Filename)
 HAVING COUNT(*) > 1;
+CREATE VIEW vFileDimensions AS
+SELECT ImageId,Filepath,Filename,
+json_extract(Metadata, '$.File:ImageWidth') AS FileWidth,
+json_extract(Metadata, '$.File:ImageHeight') AS FileHeight,
+json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsW') AS RWidth, 
+json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsH') AS RHeight,
+Metadata
+FROM Image;
 CREATE VIEW vGeotags AS
 SELECT Location,StateProvince,Country,City,AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude, Count(ImageId) AS FileCount
 FROM Image
@@ -157,6 +275,10 @@ CREATE VIEW vRecentlyModified AS
 SELECT Filepath,FileModifiedDate, Metadata
 FROM Image
 ORDER BY FileModifiedDate DESC;
+CREATE VIEW vRegionMismatch AS
+SELECT *
+FROM vFileDimensions
+WHERE FileWidth<>RWidth OR FileHeight<>RHeight;
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Copyright') AS Copyright,
@@ -190,4 +312,19 @@ json_extract(Metadata, '$.ExifIFD:Humidity') AS Humidity,
 json_extract(Metadata, '$.ExifIFD:Pressure') AS Pressure,
 Metadata
 FROM Image;
+CREATE INDEX IF NOT EXISTS "idx_image_filepath" ON "Image" (
+	"Filepath"
+);
+CREATE INDEX IF NOT EXISTS "idx_image_id" ON "Image" (
+	"ImageId"
+);
+CREATE INDEX IF NOT EXISTS "idx_image_record_modified" ON "Image" (
+	"RecordModified"
+);
+CREATE INDEX IF NOT EXISTS "idx_metadata_history_history_id" ON "MetadataHistory" (
+	"HistoryId"
+);
+CREATE INDEX IF NOT EXISTS "idx_metadata_history_image_id" ON "MetadataHistory" (
+	"ImageId"
+);
 COMMIT;
