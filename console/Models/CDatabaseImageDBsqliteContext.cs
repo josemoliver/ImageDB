@@ -32,6 +32,8 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 
     public virtual DbSet<PhotoLibrary> PhotoLibraries { get; set; }
 
+    public virtual DbSet<Region> Regions { get; set; }
+
     public virtual DbSet<RelationLocation> RelationLocations { get; set; }
 
     public virtual DbSet<RelationPeopleTag> RelationPeopleTags { get; set; }
@@ -55,7 +57,6 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
         optionsBuilder.UseSqlite(connectionString);
     }
 
-
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Batch>(entity =>
@@ -70,6 +71,12 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.ToTable("Image");
 
             entity.HasIndex(e => e.Filepath, "IX_Image_Filepath").IsUnique();
+
+            entity.HasIndex(e => e.Filepath, "idx_image_filepath");
+
+            entity.HasIndex(e => e.ImageId, "idx_image_id");
+
+            entity.HasIndex(e => e.RecordModified, "idx_image_record_modified");
 
             entity.Property(e => e.Altitude).HasColumnType("NUMERIC");
             entity.Property(e => e.Latitude).HasColumnType("NUMERIC");
@@ -96,6 +103,10 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.HasKey(e => e.HistoryId);
 
             entity.ToTable("MetadataHistory");
+
+            entity.HasIndex(e => e.HistoryId, "idx_metadata_history_history_id");
+
+            entity.HasIndex(e => e.ImageId, "idx_metadata_history_image_id");
         });
 
         modelBuilder.Entity<PeopleTag>(entity =>
@@ -112,6 +123,16 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.ToTable("PhotoLibrary");
 
             entity.Property(e => e.Folder).IsRequired();
+        });
+
+        modelBuilder.Entity<Region>(entity =>
+        {
+            entity.ToTable("Region");
+
+            entity.Property(e => e.RegionAreaH).HasColumnType("NUMERIC");
+            entity.Property(e => e.RegionAreaW).HasColumnType("NUMERIC");
+            entity.Property(e => e.RegionAreaX).HasColumnType("NUMERIC");
+            entity.Property(e => e.RegionAreaY).HasColumnType("NUMERIC");
         });
 
         modelBuilder.Entity<RelationLocation>(entity =>

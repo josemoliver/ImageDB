@@ -60,7 +60,7 @@ public partial class Image
     public string Copyright { get; set; }
 
     public string Metadata { get; set; }
-
+    public string RegionMetadata { get; set; }
     public string RecordAdded { get; set; }
 
     public int? AddedBatchId { get; set; }

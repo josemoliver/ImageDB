@@ -43,6 +43,10 @@
          "ObjectType": 0
       },
       {
+         "Name": "Region",
+         "ObjectType": 0
+      },
+      {
          "Name": "relationLocation",
          "ObjectType": 0
       },

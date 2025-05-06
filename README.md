@@ -31,8 +31,7 @@ This command-line tool scans a specified folder (or all libraries if no folder i
 ## Setup and Usage
 
 1. Use a SQLite Database Editor such as SQLite DB Browser (https://sqlitebrowser.org/). 
-2. Create SQLite Database by running the database\ImageDB.sqlite.sql file.
-2. Add Indexes to the table by running database\ImageDB_Indexes.sqlite.sql
+2. Create SQLite Database (Example name ImageDB.sqlite) by running the database\ImageDB.sqlite.sql file. This will create all the tables, views and indexes.
 3. Update the appsettings.json file with the path of your SQLite database file. You can also include folder paths to ingore. For example, some database management tools may create temp folders for deleted files you may wish not to include in the database. 
 4. Open database and add your photo collection folders to the PhotoLibrary table. For example, you may have a divided your photo collections into folders based on Years.
 5. Ensure exiftool.exe is properly installed and included in your system's PATH environment variable.
@@ -82,6 +81,7 @@ Using a SQLlite database management tool, open the database file so you can anal
 | `PeopleTag`  |  People tags. |
 | `PhotoLibrary`  |  Your photo collection main folders. All files and subfolder contained are scan by the tool. |
 | `Tag`  |  Descriptive tags |
+| `Region`  |  Metadata Working Group (MWG) Regions |
 | `relation*`  | These tables maintain the ImageId relationships between tags, location identifiers, and people tags. |
 
 
@@ -111,6 +111,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Tag.TagName`     | Merged values from IPTC:Keywords, XMP-dc:Subject, and IFD0:XPKeywords  |
 | `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
 | `Location.LocationName`     | *From first Image.Location found during scan, can be modified afterwards.  |
+| `Region.*`     | MWG Region Info https://www.exiftool.org/TagNames/MWG.html#RegionInfo  |
 
 ## DB Views:
 The views are meant to assist in your metadata inspection and analysis. For example, identifying field discrepancies, finding duplicate filenames, etc. You will note that the exiftool JSON output can be queried using SQLite's Json Query Support - https://sqlite.org/json1.html. Feel free to edit existing ones or create your own.

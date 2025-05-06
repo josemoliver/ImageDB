@@ -89,7 +89,7 @@ namespace ImageDB
             Console.WriteLine("[EXIFTOOL] - Exiftool Process Started");
         }
 
-        public static string GetExiftoolMetadata(string filepath)
+        public static string GetExiftoolMetadata(string filepath, string mode)
         {
 
             lock (exiftoolLock)
@@ -105,13 +105,24 @@ namespace ImageDB
                     string quotedFilepath = $"\"{filepath}\"";
 
                     // Add command options
-                    cmd.AppendLine($"-json");   // JSON output
-                    cmd.AppendLine($"-G1");     // Group output by tag
-                    cmd.AppendLine($"-n");      // Numeric output
-                                                //cmd.AppendLine($"-charset UTF8");
-                                                //cmd.AppendLine($"-charset filename=UTF8");      // Filename as UTF-8
-                    cmd.AppendLine(filepath);   // File path
-                    cmd.AppendLine("-execute"); // Execute the command
+                    cmd.AppendLine($"-json");               // JSON output
+
+
+                    if (mode.ToLower()=="regions")
+                    {
+                        cmd.AppendLine($"-struct");         // Structure output
+                        cmd.AppendLine($"-XMP:RegionInfo"); // RegionInfo
+                    }
+                    else
+                    {
+                        cmd.AppendLine($"-G1");                 // Group output by tag
+                    }
+
+                    cmd.AppendLine($"-n");                      // Numeric output
+                    //cmd.AppendLine($"-charset UTF8");
+                    //cmd.AppendLine($"-charset filename=UTF8");      // Filename as UTF-8
+                    cmd.AppendLine(filepath);               // File path
+                    cmd.AppendLine("-execute");             // Execute the command
 
                     exiftoolInput!.Write(cmd.ToString());
                     exiftoolInput.Flush();
@@ -130,7 +141,7 @@ namespace ImageDB
                     string result = outputBuilder.ToString().Trim();
 
 
-                    // This is a workaround for Exiftool which adds the array brackets as well as sometimes changes the datatype of the values. All values will be returning as text.
+                    // Type Safety: This is a workaround for Exiftool which adds the array brackets as well as sometimes changes the datatype of the values. All values will be returning as text.
                     result = result.Trim('[', ']');
                     result = JsonConverter.ConvertNumericAndBooleanValuesToString(result);
 
