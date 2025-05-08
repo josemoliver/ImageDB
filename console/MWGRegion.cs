@@ -23,6 +23,7 @@ namespace ImageDB
             public string? W { get; set; }
             public string? X { get; set; }
             public string? Y { get; set; }
+            public string? D { get; set; }
         }
 
         public class RegionInfo

@@ -33,6 +33,7 @@ using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 using static System.Formats.Asn1.AsnWriter;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using System.IO.Enumeration;
 
 // ImageDB
 // Source Repo & Documentation: https://github.com/josemoliver/ImageDB
@@ -726,7 +727,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         string copyright                = String.Empty;
         string fileCreatedDate          = String.Empty;
         string fileModifiedDate         = String.Empty;
-
+        string filename                 = String.Empty; 
         string stringLatitude           = String.Empty; 
         string stringLongitude          = String.Empty;
         string stringAltitude           = String.Empty; 
@@ -793,6 +794,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             //File Properties - Decending Priority
             fileCreatedDate     = GetExiftoolValue(doc, "System:FileCreateDate");
             fileModifiedDate    = GetExiftoolValue(doc, "System:FileModifyDate");
+            filename            = GetExiftoolValue(doc, "System:FileName");
 
             // Format file datetime to desired format
             fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
@@ -1018,17 +1020,27 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
             if (regionJsonMetadata!=String.Empty)
             {
-                MWGRegion.Region regions = JsonSerializer.Deserialize<MWGRegion.Region>(regionJsonMetadata, new JsonSerializerOptions{PropertyNameCaseInsensitive = true});
+                try
+                {
+                    MWGRegion.Region regions = JsonSerializer.Deserialize<MWGRegion.Region>(regionJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                if ((regions!=null)&&(regions.RegionInfo.RegionList!=null))
-                { 
-                    var serviceRegions = new RegionService(dbFiles);
-                    foreach (var reg in regions.RegionInfo.RegionList)
+                    if ((regions != null) && (regions.RegionInfo.RegionList != null))
                     {
-                        await serviceRegions.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                        var serviceRegions = new RegionService(dbFiles);
+                        foreach (var reg in regions.RegionInfo.RegionList)
+                        {
+
+                            await serviceRegions.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D);
+
+                        }
                     }
                 }
-            
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
+                    LogEntry(0, filename, ex.ToString());
+                }
+
             }
 
             // XIII. Get Descriptive tags/keywords
