@@ -16,12 +16,11 @@ namespace ImageDB
             dbFiles = context;
         }
 
-        public async Task AddRegion(int imageId, string regionName, string regionType, string regionAreaUnit, string regionAreaH, string regionAreaW, string regionAreaX, string regionAreaY, string regionAreaD)
+        public async Task AddRegion(int imageId, string? regionName, string? regionType, string? regionAreaUnit, string? regionAreaH, string? regionAreaW, string? regionAreaX, string? regionAreaY, string? regionAreaD)
         {
-
-            regionName = regionName.Trim();
-            regionAreaUnit = regionAreaUnit.Trim();
-            regionType = regionType.Trim();
+            regionName = regionName?.Trim();
+            regionAreaUnit = regionAreaUnit?.Trim();
+            regionType = regionType?.Trim();
 
             decimal? regionAreaHDecimal;
             decimal? regionAreaWDecimal;
