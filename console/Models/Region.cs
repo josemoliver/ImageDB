@@ -24,4 +24,6 @@ public partial class Region
     public decimal? RegionAreaX { get; set; }
 
     public decimal? RegionAreaY { get; set; }
+
+    public decimal? RegionAreaD { get; set; }
 }

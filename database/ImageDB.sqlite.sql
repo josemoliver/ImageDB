@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS "Region" (
 	"RegionAreaW"	NUMERIC,
 	"RegionAreaX"	NUMERIC,
 	"RegionAreaY"	NUMERIC,
+	"RegionAreaD"	NUMERIC,
 	PRIMARY KEY("RegionId")
 );
 CREATE TABLE IF NOT EXISTS "Tag" (
