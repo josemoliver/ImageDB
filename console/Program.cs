@@ -168,10 +168,6 @@ else
 }
 
 
-
-
-
-
 // Method to set the scan mode based on the input
 void SetScanMode(string mode)
 {
@@ -495,11 +491,13 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             string deleteTagQuery           = @"DELETE FROM relationTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationTag.ImageId);";
             string deletePeopleTagQuery     = @"DELETE FROM relationPeopleTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationPeopleTag.ImageId);";
             string deleteLocationTagQuery   = @"DELETE FROM relationLocation WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationLocation.ImageId);";
+            string deleteRegion             = @"DELETE FROM Region WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Region.ImageId);";
 
             // Execute the raw SQL command
             dbFiles.Database.ExecuteSqlRaw(deleteTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deletePeopleTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteLocationTagQuery);
+            dbFiles.Database.ExecuteSqlRaw(deleteRegion);
 
             Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
             Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
@@ -733,7 +731,8 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         string stringAltitude           = String.Empty; 
         string latitudeRef              = String.Empty;    
         string longitudeRef             = String.Empty; 
-    
+        string sourceFile               = String.Empty;
+      
         decimal? latitude;
         decimal? longitude;
         decimal? altitude;
@@ -795,6 +794,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             fileCreatedDate     = GetExiftoolValue(doc, "System:FileCreateDate");
             fileModifiedDate    = GetExiftoolValue(doc, "System:FileModifyDate");
             filename            = GetExiftoolValue(doc, "System:FileName");
+            sourceFile          = GetExiftoolValue(doc, "System:SourceFile");
 
             // Format file datetime to desired format
             fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
@@ -940,9 +940,9 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 try
                 {
-                    // Round values to 5 decimal places
-                    //stringLatitude  = RoundCoordinate(stringLatitude, 5);
-                    //stringLongitude = RoundCoordinate(stringLongitude, 5);
+                    // Round values to 6 decimal places
+                    stringLatitude  = RoundCoordinate(stringLatitude, 6);
+                    stringLongitude = RoundCoordinate(stringLongitude, 6);
 
                     latitude    = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
                     longitude   = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
@@ -998,6 +998,9 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage" });
 
                 var servicePeopleTags = new PeopleTagService(dbFiles);
+
+                await servicePeopleTags.DeleteRelations(imageID); // Delete existing tags
+
                 foreach (var name in peopleTag)
                 {         
                     await servicePeopleTags.AddPeopleTags(name, imageID);
@@ -1007,16 +1010,9 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
             // XII. Get MWG Regions - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
 
-            // Retrieve regions to delete
-            var regionsToDelete = dbFiles.Regions.Where(r => r.ImageId == imageID).ToList();
-
-            if (regionsToDelete.Count > 0)
-            {
-                dbFiles.Regions.RemoveRange(regionsToDelete);
-
-                // Save changes to commit the deletion
-                dbFiles.SaveChanges();
-            }
+            // Delete existing regions
+            var serviceRegions = new RegionService(dbFiles);
+            await serviceRegions.DeleteRegions(imageID);
 
             if (regionJsonMetadata!=String.Empty)
             {
@@ -1026,7 +1022,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                     if ((regions != null) && (regions.RegionInfo.RegionList != null))
                     {
-                        var serviceRegions = new RegionService(dbFiles);
+       
                         foreach (var reg in regions.RegionInfo.RegionList)
                         {
 
@@ -1038,7 +1034,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 catch (Exception ex)
                 {
                     Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
-                    LogEntry(0, filename, ex.ToString());
+                    LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
                 }
 
             }
@@ -1050,10 +1046,13 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
 
                 var serviceDescriptiveTags = new DescriptiveTagService(dbFiles);
-                foreach (var tag in descriptiveTag)
-                {
+
+            await serviceDescriptiveTags.DeleteAllRelations(imageID); // Delete existing tags
+
+            foreach (var tag in descriptiveTag)
+            {
                     await serviceDescriptiveTags.AddTags(tag, imageID);
-                }
+            }
 
             // XIV. Get IPTC Location Identifiers - Introduced by IPTC in the 2014 IPTC Extension Standard.
 
@@ -1066,6 +1065,9 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 locationIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
 
                 var serviceLocations = new LocationIdService(dbFiles);
+
+                await serviceLocations.DeleteRelations(imageID); // Delete existing location identifiers
+
                 foreach (var locationURI in locationIdentifier)
                 {
                        await serviceLocations.AddLocationId(locationURI, location, imageID);
@@ -1318,7 +1320,7 @@ static string RoundCoordinate(string stringCoordinate, int decimalPlaces)
         // Round the decimal value to defined decimal places
         coordinate = Math.Round(coordinate, decimalPlaces);
         // Return the rounded value as a string
-        return coordinate.ToString("F5");
+        return coordinate.ToString("F"+ decimalPlaces);
     }
 
     // Return the original string if it's empty or not a valid decimal

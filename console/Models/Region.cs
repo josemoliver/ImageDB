@@ -7,7 +7,7 @@ namespace ImageDB.Models;
 
 public partial class Region
 {
-    public string RegionId { get; set; }
+    public int RegionId { get; set; }
 
     public int ImageId { get; set; }
 
