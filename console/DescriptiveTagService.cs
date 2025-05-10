@@ -16,6 +16,25 @@ namespace ImageDB
             dbFiles = context;
         }
 
+        public async Task DeleteAllRelations(int imageId)
+        {
+            // Delete all relations for the given imageId
+            var relationsToDelete = dbFiles.RelationTags
+                .Where(r => r.ImageId == imageId)
+                .ToList();
+
+            if (relationsToDelete.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var relation in relationsToDelete)
+            {
+                dbFiles.RelationTags.Remove(relation);
+            }
+
+            dbFiles.SaveChanges();
+        }
         public async Task AddTags(string tagName, int imageId)
         {
             // Check if the person already exists in the Tag table

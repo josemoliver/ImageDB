@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS "PhotoLibrary" (
 	PRIMARY KEY("PhotoLibraryId" AUTOINCREMENT)
 );
 CREATE TABLE IF NOT EXISTS "Region" (
-	"RegionId"	TEXT,
+	"RegionId"	INTEGER,
 	"ImageId"	INTEGER NOT NULL,
 	"RegionName"	TEXT,
 	"RegionType"	TEXT,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS "Region" (
 	"RegionAreaX"	NUMERIC,
 	"RegionAreaY"	NUMERIC,
 	"RegionAreaD"	NUMERIC,
-	PRIMARY KEY("RegionId")
+	PRIMARY KEY("RegionId" AUTOINCREMENT)
 );
 CREATE TABLE IF NOT EXISTS "Tag" (
 	"TagId"	INTEGER,
@@ -267,6 +267,21 @@ CREATE VIEW vMissingGeotags AS
 SELECT Filepath, Latitude,Longitude Location,StateProvince,Country,City
 FROM Image
 WHERE length(Location)=0 AND length(StateProvince)=0 AND length(Country)=0 AND length(City)=0;
+CREATE VIEW vPeopleTagRegionCountDiff AS
+SELECT i.ImageId,i.Filepath,i.Filename, i.RegionMetadata, peopleTagCount, regionCount
+FROM Image i
+LEFT JOIN (
+    SELECT ImageId, COUNT(*) AS peopleTagCount
+    FROM relationPeopleTag
+    GROUP BY ImageId
+) rpt ON i.ImageId = rpt.ImageId
+LEFT JOIN (
+    SELECT ImageId, COUNT(*) AS regionCount
+    FROM Region
+    GROUP BY ImageId
+) r ON i.ImageId = r.ImageId
+WHERE IFNULL(rpt.peopleTagCount, 0) != IFNULL(r.regionCount, 0)
+ORDER BY i.ImageId;
 CREATE VIEW vPhotoDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
 CREATE VIEW vRatingCounts AS
@@ -279,7 +294,7 @@ ORDER BY FileModifiedDate DESC;
 CREATE VIEW vRegionMismatch AS
 SELECT *
 FROM vFileDimensions
-WHERE FileWidth<>RWidth OR FileHeight<>RHeight;
+WHERE (FileWidth<>RWidth OR FileHeight<>RHeight) AND (FileWidth<>RHeight OR FileHeight<>RWidth);
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Copyright') AS Copyright,
@@ -316,14 +331,8 @@ FROM Image;
 CREATE INDEX IF NOT EXISTS "idx_image_filepath" ON "Image" (
 	"Filepath"
 );
-CREATE INDEX IF NOT EXISTS "idx_image_id" ON "Image" (
-	"ImageId"
-);
 CREATE INDEX IF NOT EXISTS "idx_image_record_modified" ON "Image" (
 	"RecordModified"
-);
-CREATE INDEX IF NOT EXISTS "idx_metadata_history_history_id" ON "MetadataHistory" (
-	"HistoryId"
 );
 CREATE INDEX IF NOT EXISTS "idx_metadata_history_image_id" ON "MetadataHistory" (
 	"ImageId"

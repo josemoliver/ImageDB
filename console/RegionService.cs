@@ -16,6 +16,26 @@ namespace ImageDB
             dbFiles = context;
         }
 
+        public async Task DeleteRegions(int imageId)
+        {
+            // Delete all relations for the given imageId
+            var relationsToDelete = dbFiles.Regions
+                .Where(r => r.ImageId == imageId)
+                .ToList();
+
+            if (relationsToDelete.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var relation in relationsToDelete)
+            {
+                dbFiles.Regions.Remove(relation);
+            }
+
+            dbFiles.SaveChanges();
+        }
+
         public async Task AddRegion(int imageId, string? regionName, string? regionType, string? regionAreaUnit, string? regionAreaH, string? regionAreaW, string? regionAreaX, string? regionAreaY, string? regionAreaD)
         {
             regionName = regionName?.Trim();
@@ -36,7 +56,6 @@ namespace ImageDB
 
             var region = new Region
             {
-                RegionId = Guid.NewGuid().ToString(),
                 ImageId = imageId,
                 RegionName = regionName,
                 RegionType = regionType,
