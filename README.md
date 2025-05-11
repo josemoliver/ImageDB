@@ -97,9 +97,9 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
 | `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |
 | `Image.Device`     | Combined from IFD0:Make and IFD0:Model |
-| `Image.Latitude`     | GPS:GPSLatitude and GPS:GPSLatitudeRef |
-| `Image.Longitude`     | GPS:GPSLongitude and GPS:GPSLongitudeRef|
-| `Image.GPSAltitude`     | GPS:GPSAltitude |
+| `Image.Latitude`     | Composite:GPSLatitude (Rounded to 6 decimal places) |
+| `Image.Longitude`     | Composite:GPSLongitude (Rounded to 6 decimal places) |
+| `Image.GPSAltitude`     | Composite:GPSAltitude |
 | `Image.Location`     | XMP-iptcExt:LocationCreatedLocation, XMP-iptcExt:LocationCreatedSublocation, or XMP-iptcCore:Location, IPTC:Sub-location  |
 | `Image.City`     | XMP-iptcExt:LocationCreatedCity, XMP-photoshop:City, or IPTC:City |
 | `Image.StateProvince`     | XMP-iptcExt:LocationCreatedProvinceState, XMP-photoshop:State, or IPTC:Province-State  |
