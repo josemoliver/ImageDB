@@ -794,7 +794,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             fileCreatedDate     = GetExiftoolValue(doc, "System:FileCreateDate");
             fileModifiedDate    = GetExiftoolValue(doc, "System:FileModifyDate");
             filename            = GetExiftoolValue(doc, "System:FileName");
-            sourceFile          = GetExiftoolValue(doc, "System:SourceFile");
+            sourceFile          = GetExiftoolValue(doc, "SourceFile").Replace("/","\\");
 
             // Format file datetime to desired format
             fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
@@ -812,7 +812,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 //Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 36
                 // Also reading legacy Windows XP Exif Comment and Subject tags. These tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-                description = GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription","XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPComment", "IFD0:XPSubject", "IPTC:Headline" });
+                description = GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription","XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPSubject", "IFD0:XPComment", "IPTC:Headline" });
 
             // III. Image.Rating 
 
@@ -1033,6 +1033,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 }
                 catch (Exception ex)
                 {
+                    // Handle the exception - Log the error message
                     Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
                     LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
                 }
