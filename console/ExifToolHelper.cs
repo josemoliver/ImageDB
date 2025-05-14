@@ -108,10 +108,11 @@ namespace ImageDB
                     cmd.AppendLine($"-json");               // JSON output
 
 
-                    if (mode.ToLower()=="regions")
+                    if (mode.ToLower()=="mwg")
                     {
                         cmd.AppendLine($"-struct");         // Structure output
-                        cmd.AppendLine($"-XMP:RegionInfo"); // RegionInfo
+                        cmd.AppendLine($"-XMP:RegionInfo"); // MWG RegionInfo
+                        cmd.AppendLine($"-XMP:Collections");// MWG Collections
                     }
                     else
                     {

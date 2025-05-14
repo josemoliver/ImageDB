@@ -14,6 +14,13 @@ CREATE TABLE IF NOT EXISTS "Batch" (
 	"Comment"	TEXT,
 	PRIMARY KEY("BatchID" AUTOINCREMENT)
 );
+CREATE TABLE IF NOT EXISTS "Collection" (
+	"CollectionId"	INTEGER,
+	"ImageId"	INTEGER NOT NULL,
+	"CollectionName"	TEXT,
+	"CollectionURI"	TEXT,
+	PRIMARY KEY("CollectionId" AUTOINCREMENT)
+);
 CREATE TABLE IF NOT EXISTS "Image" (
 	"ImageId"	INTEGER,
 	"PhotoLibraryId"	INTEGER,
@@ -42,7 +49,7 @@ CREATE TABLE IF NOT EXISTS "Image" (
 	"Creator"	TEXT,
 	"Copyright"	TEXT,
 	"Metadata"	TEXT,
-	"RegionMetadata"	TEXT,
+	"StuctMetadata"	TEXT,
 	"RecordAdded"	TEXT,
 	"AddedBatchId"	INTEGER,
 	"RecordModified"	TEXT,
@@ -74,7 +81,7 @@ CREATE TABLE IF NOT EXISTS "MetadataHistory" (
 	"ModifiedBatchId"	INTEGER,
 	"RecordModified"	TEXT,
 	"Metadata"	TEXT,
-	"RegionMetadata"	TEXT,
+	"StuctMetadata"	TEXT,
 	PRIMARY KEY("HistoryId" AUTOINCREMENT)
 );
 CREATE TABLE IF NOT EXISTS "PeopleTag" (
@@ -132,6 +139,8 @@ from PeopleTag
 LEFT JOIN relationPeopleTag on relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
 GROUP BY PeopleTag.PersonName
 ORDER BY FaceCount DESC;
+CREATE VIEW vCollections AS
+SELECT CollectionName, CollectionURI, Count (CollectionId) AS GroupingCount FROM Collection GROUP BY CollectionName, CollectionURI ORDER BY CollectionName, CollectionURI;
 CREATE VIEW vCreator AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Artist') AS Artist,
@@ -268,7 +277,7 @@ SELECT Filepath, Latitude,Longitude Location,StateProvince,Country,City
 FROM Image
 WHERE length(Location)=0 AND length(StateProvince)=0 AND length(Country)=0 AND length(City)=0;
 CREATE VIEW vPeopleTagRegionCountDiff AS
-SELECT i.ImageId,i.Filepath,i.Filename, i.RegionMetadata, peopleTagCount, regionCount
+SELECT i.ImageId,i.Filepath,i.Filename, i.StuctMetadata, peopleTagCount, regionCount
 FROM Image i
 LEFT JOIN (
     SELECT ImageId, COUNT(*) AS peopleTagCount

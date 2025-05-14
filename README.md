@@ -77,6 +77,7 @@ Using a SQLlite database management tool, open the database file so you can anal
 | `Image`    | Image metadata table. Includes tables with derived data from file metadata (For example, date and Device). The column Metadata contains the exiftool JSON output of the files with all the key/value pairs found by Exiftool. Detailed descriptions can be found in exiftool.org. |
 | `Log`  |  Error/Warning logs |
 | `Location`          | Location Identifiers found. If a photo metadata uses IPTC Location Identifiers. Refer to blog post: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/ |
+| `Collection`          | MWG Collections |
 | `MetadataHistory`          | Prior to updating a record on the Image table, the exiftool JSON Metdata is copied to this table for archiving purposes. Say you wish to figure out what metadata fields have been changed by your photo management softare or wish. |
 | `PeopleTag`  |  People tags. |
 | `PhotoLibrary`  |  Your photo collection main folders. All files and subfolder contained are scan by the tool. |
@@ -111,6 +112,8 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Tag.TagName`     | Merged values from IPTC:Keywords, XMP-dc:Subject, and IFD0:XPKeywords  |
 | `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
 | `Location.LocationName`     | *From first Image.Location found during scan, can be modified afterwards.  |
+| `Collection.CollectionName`     | Collection Name  |
+| `Collection.CollectionURI`     | Collection URI  |
 | `Region.*`     | MWG Region Info https://www.exiftool.org/TagNames/MWG.html#RegionInfo  |
 
 ## DB Views:

@@ -7,11 +7,11 @@ using System.Threading.Tasks;
 
 namespace ImageDB
 {
-    internal class RegionService
+    internal class StructService
     {
         private readonly CDatabaseImageDBsqliteContext dbFiles;
 
-        public RegionService(CDatabaseImageDBsqliteContext context)
+        public StructService(CDatabaseImageDBsqliteContext context)
         {
             dbFiles = context;
         }
@@ -33,6 +33,24 @@ namespace ImageDB
                 dbFiles.Regions.Remove(relation);
             }
 
+            dbFiles.SaveChanges();
+        }
+
+        public async Task DeleteCollections(int imageId)
+        {
+            // Delete all relations for the given imageId
+            var relationsToDelete = dbFiles.Collections
+                .Where(c => c.ImageId == imageId)
+                .ToList();
+            
+            if (relationsToDelete.Count == 0)
+            {
+                return;
+            }
+            foreach (var relation in relationsToDelete)
+            {
+                dbFiles.Collections.Remove(relation);
+            }
             dbFiles.SaveChanges();
         }
 
@@ -68,6 +86,22 @@ namespace ImageDB
             };
 
             dbFiles.Regions.Add(region);
+            await dbFiles.SaveChangesAsync();
+        }
+
+        public async Task AddCollection(int imageId, string? collectionName, string? collectionURI)
+        {
+            collectionName = collectionName?.Trim();
+            collectionURI = collectionURI?.Trim();
+
+            var collection = new Collection
+            {
+                ImageId = imageId,
+                CollectionName = collectionName,
+                CollectionUri = collectionURI,
+            };
+
+            dbFiles.Collections.Add(collection);
             await dbFiles.SaveChangesAsync();
         }
     }

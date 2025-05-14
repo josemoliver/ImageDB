@@ -19,6 +19,10 @@
          "ObjectType": 0
       },
       {
+         "Name": "Collection",
+         "ObjectType": 0
+      },
+      {
          "Name": "Image",
          "ObjectType": 0
       },
