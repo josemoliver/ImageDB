@@ -487,17 +487,21 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         {
             var jobbatch = dbFilesUpdate.Batches.FirstOrDefault(batch => batch.BatchId == batchID);
 
-            // Delete orphaned relation records
-            string deleteTagQuery           = @"DELETE FROM relationTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationTag.ImageId);";
-            string deletePeopleTagQuery     = @"DELETE FROM relationPeopleTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationPeopleTag.ImageId);";
-            string deleteLocationTagQuery   = @"DELETE FROM relationLocation WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationLocation.ImageId);";
-            string deleteRegion             = @"DELETE FROM Region WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Region.ImageId);";
-
+            // Delete orphaned records
+            string deleteImageQuery         = @"DELETE FROM Image WHERE PhotoLibraryId NOT IN (SELECT PhotoLibraryId FROM PhotoLibrary);"; // Delete orphaned images if PhotoLibrary does not exist
+            string deleteTagQuery           = @"DELETE FROM relationTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationTag.ImageId);"; // Delete orphaned tags
+            string deletePeopleTagQuery     = @"DELETE FROM relationPeopleTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationPeopleTag.ImageId);"; // Delete orphaned people tags
+            string deleteLocationTagQuery   = @"DELETE FROM relationLocation WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationLocation.ImageId);"; // Delete orphaned location tags
+            string deleteRegion             = @"DELETE FROM Region WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Region.ImageId);"; // Delete orphaned regions
+            string deleteCollectionQuery    = @"DELETE FROM Collection WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Collection.ImageId);"; // Delete orphaned images
+            
             // Execute the raw SQL command
+            dbFiles.Database.ExecuteSqlRaw(deleteImageQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deletePeopleTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteLocationTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteRegion);
+            dbFiles.Database.ExecuteSqlRaw(deleteCollectionQuery);
 
             Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
             Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
@@ -563,7 +567,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
 {
     string specificFilePath     = String.Empty;
     string jsonMetadata         = String.Empty;
-    string regionJsonMetadata   = String.Empty;
+    string structJsonMetadata   = String.Empty;
     // Find the image by ImageId
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -585,9 +589,9 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             }
 
             // Check if the file has regions
-            if (jsonMetadata.Contains("XMP-mwg-rs:Region"))
+            if (jsonMetadata.Contains("XMP-mwg-rs:Region") || (jsonMetadata.Contains("XMP-mwg-coll:Collection")))
             {
-                regionJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "regions");
+                structJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "mwg");
             }
 
             // Get the file size and creation/modification dates
@@ -601,7 +605,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.FileCreatedDate   = fileDateCreated;
             image.FileModifiedDate  = fileDateModified;
             image.Metadata          = jsonMetadata;
-            image.RegionMetadata    = regionJsonMetadata;
+            image.StuctMetadata     = structJsonMetadata;
             image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
 
             // Save changes to the database
@@ -628,7 +632,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 {
     int imageId                 = 0;
     string jsonMetadata         = String.Empty;
-    string regionJsonMetadata   = String.Empty;
+    string structJsonMetadata   = String.Empty;
 
     // Dictionary to map file extensions to normalized values
     var extensionMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -649,10 +653,10 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             throw new ArgumentException("No metadata found for the file.");
         }
 
-        // Check if the file has regions
-        if (jsonMetadata.Contains("XMP-mwg-rs:Region"))
+    // Check if the file has regions
+        if (jsonMetadata.Contains("XMP-mwg-rs:Region") || (jsonMetadata.Contains("XMP-mwg-coll:Collection")))
         {
-            regionJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath,"regions");
+             structJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "mwg");
         }
 
         // Normalize the file extension
@@ -677,7 +681,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
                 Filesize = fileSize.ToString(),
 
                 Metadata = jsonMetadata,
-                RegionMetadata = regionJsonMetadata,
+                StuctMetadata = structJsonMetadata,
                 RecordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt")
             };
 
@@ -707,7 +711,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 {
         // Initialize variables for metadata extraction
         string jsonMetadata             = String.Empty;
-        string regionJsonMetadata       = String.Empty;
+        string structJsonMetadata       = String.Empty;
         string title                    = String.Empty;
         string description              = String.Empty;
         string rating                   = String.Empty;
@@ -745,7 +749,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
         jsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.Metadata).FirstOrDefault() ?? "";
-        regionJsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.RegionMetadata).FirstOrDefault() ?? "";
+        structJsonMetadata = dbFiles.Images.Where(image => image.ImageId == imageID).Select(image => image.StuctMetadata).FirstOrDefault() ?? "";
 
         //Delete record PeopleTags from db
         bool tagsFound = false;
@@ -874,7 +878,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                         if (Regex.IsMatch(iptcTime, pattern) == true)
                         {
                             iptcDateTime = iptcDate + " " + iptcTime; // Combine the IPTC date and time strings
-                            tzDateTime = dateTimeTaken.Trim();      // IPTC may contain Time Zone
+                            tzDateTime = dateTimeTaken.Trim();        // IPTC may contain Time Zone
                         }
                         else
                         {
@@ -1008,34 +1012,53 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
 
 
-            // XII. Get MWG Regions - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
+            // XII. Get MWG Regions and Collections - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
 
-            // Delete existing regions
-            var serviceRegions = new RegionService(dbFiles);
-            await serviceRegions.DeleteRegions(imageID);
+            // Delete existing regions and collections.
+            var mwgStruct = new StructService(dbFiles);
+            await mwgStruct.DeleteRegions(imageID);
+            await mwgStruct.DeleteCollections(imageID);
 
-            if (regionJsonMetadata!=String.Empty)
+            if (structJsonMetadata != String.Empty)
             {
-                try
+                // Deserialize the JSON string into a MetadataStuct.Struct object
+                MetadataStuct.Struct structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (structMeta != null)
                 {
-                    MWGRegion.Region regions = JsonSerializer.Deserialize<MWGRegion.Region>(regionJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                    if ((regions != null) && (regions.RegionInfo.RegionList != null))
+                    try
                     {
-       
-                        foreach (var reg in regions.RegionInfo.RegionList)
+                        if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
                         {
-
-                            await serviceRegions.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D);
-
+                            foreach (var reg in structMeta.RegionInfo.RegionList)
+                            {
+                                await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D);
+                            }
                         }
                     }
-                }
-                catch (Exception ex)
-                {
-                    // Handle the exception - Log the error message
-                    Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
-                    LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                    catch (Exception ex)
+                    {
+                        // Handle the exception - Log the error message
+                        Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
+                        LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                    }
+
+                    try
+                    {
+                        if (structMeta?.Collections?.Any() == true)
+                        {
+                            foreach (var col in structMeta.Collections)
+                            {
+                                await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Handle the exception - Log the error message
+                        Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
+                        LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                    }
                 }
 
             }
@@ -1462,7 +1485,7 @@ static void CopyImageToMetadataHistory(int imageId)
             ImageId         = image.ImageId,
             Filepath        = image.Filepath,
             Metadata        = image.Metadata,
-            RegionMetadata  = image.RegionMetadata,
+            StuctMetadata   = image.StuctMetadata,
             RecordAdded     = image.RecordAdded,
             AddedBatchId    = image.AddedBatchId,
             RecordModified  = image.RecordModified,

@@ -9,7 +9,7 @@ public partial class Log
 {
     public int LogEntryId { get; set; }
 
-    public string Datetime { get; set; }
+    public string? Datetime { get; set; }
 
     public int? BatchId { get; set; }
 

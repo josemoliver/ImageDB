@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace ImageDB
 {
-    internal class MWGRegion
+    internal class MetadataStuct
     {
 
         public class AppliedToDimensions
@@ -39,10 +39,17 @@ namespace ImageDB
             public string Type { get; set; }
         }
 
-        public class Region
+        public class Collection
+        {
+            public string CollectionName { get; set; }
+            public string CollectionURI { get; set; }
+        }
+
+        public class Struct
         {
             public string SourceFile { get; set; }
             public RegionInfo RegionInfo { get; set; }
+            public List<Collection> Collections { get; set; }
         }
     }
 }

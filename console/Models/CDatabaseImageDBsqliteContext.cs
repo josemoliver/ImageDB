@@ -20,6 +20,8 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 
     public virtual DbSet<Batch> Batches { get; set; }
 
+    public virtual DbSet<Collection> Collections { get; set; }
+
     public virtual DbSet<Image> Images { get; set; }
 
     public virtual DbSet<Location> Locations { get; set; }
@@ -66,6 +68,13 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.Property(e => e.BatchId).HasColumnName("BatchID");
         });
 
+        modelBuilder.Entity<Collection>(entity =>
+        {
+            entity.ToTable("Collection");
+
+            entity.Property(e => e.CollectionUri).HasColumnName("CollectionURI");
+        });
+
         modelBuilder.Entity<Image>(entity =>
         {
             entity.ToTable("Image");
@@ -73,8 +82,6 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.HasIndex(e => e.Filepath, "IX_Image_Filepath").IsUnique();
 
             entity.HasIndex(e => e.Filepath, "idx_image_filepath");
-
-            entity.HasIndex(e => e.ImageId, "idx_image_id");
 
             entity.HasIndex(e => e.RecordModified, "idx_image_record_modified");
 
@@ -104,8 +111,6 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 
             entity.ToTable("MetadataHistory");
 
-            entity.HasIndex(e => e.HistoryId, "idx_metadata_history_history_id");
-
             entity.HasIndex(e => e.ImageId, "idx_metadata_history_image_id");
         });
 
@@ -129,6 +134,7 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
         {
             entity.ToTable("Region");
 
+            entity.Property(e => e.RegionAreaD).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaH).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaW).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaX).HasColumnType("NUMERIC");
