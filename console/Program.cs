@@ -971,7 +971,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
                 // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
-                string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedLocation", "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
+                string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedLocationName", "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
                 string[] exiftoolCityTags           = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
                 string[] exiftoolStateProvinceTags  = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
                 string[] exiftoolCountryTags        = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };

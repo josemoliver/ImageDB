@@ -28,8 +28,8 @@ namespace ImageDB
 
         public class RegionInfo
         {
-            public AppliedToDimensions AppliedToDimensions { get; set; }
-            public List<RegionList> RegionList { get; set; }
+            public AppliedToDimensions AppliedToDimensions { get; set; } = new AppliedToDimensions();
+            public List<RegionList> RegionList { get; set; } = new List<RegionList>();
         }
 
         public class RegionList

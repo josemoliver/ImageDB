@@ -2,7 +2,7 @@
   "profiles": {
     "ImageDB": {
       "commandName": "Project",
-      "commandLineArgs": "\r\n"
+      "commandLineArgs": "--mode normal --folder \"D:\\test\\cTest\"\r\n"
     }
   }
 }
