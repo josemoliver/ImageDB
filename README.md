@@ -101,7 +101,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Image.Latitude`     | Composite:GPSLatitude (Rounded to 6 decimal places) |
 | `Image.Longitude`     | Composite:GPSLongitude (Rounded to 6 decimal places) |
 | `Image.GPSAltitude`     | Composite:GPSAltitude |
-| `Image.Location`     | XMP-iptcExt:LocationCreatedLocation, XMP-iptcExt:LocationCreatedSublocation, or XMP-iptcCore:Location, IPTC:Sub-location  |
+| `Image.Location`     | XMP-iptcExt:LocationCreatedLocationName, XMP-iptcExt:LocationCreatedSublocation, XMP-iptcCore:Location, or IPTC:Sub-location  |
 | `Image.City`     | XMP-iptcExt:LocationCreatedCity, XMP-photoshop:City, or IPTC:City |
 | `Image.StateProvince`     | XMP-iptcExt:LocationCreatedProvinceState, XMP-photoshop:State, or IPTC:Province-State  |
 | `Image.Country`     | XMP-iptcExt:LocationCreatedCountryName, XMP-photoshop:Country or IPTC:Country-PrimaryLocationName |
