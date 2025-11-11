@@ -7,6 +7,19 @@ using System.Threading.Tasks;
 
 namespace ImageDB
 {
+    /// <summary>
+    /// Service for managing people tags related to images.
+    /// 
+    /// What it does:
+    /// - Ensures a person's tag exists in the `PeopleTags` table (creates it if missing).
+    /// - Creates relation entries in `RelationPeopleTags` to associate a `PeopleTag` with an image.
+    /// - Removes all `RelationPeopleTag` entries for a given image.
+    /// 
+    /// This service operates against the provided `CDatabaseImageDBsqliteContext` and uses
+    /// Entity Framework Core to persist changes. Methods are intended to be used from
+    /// asynchronous workflows; callers should handle exceptions and concurrency as needed.
+    /// </summary>
+    
     public class PeopleTagService
     {
         private readonly CDatabaseImageDBsqliteContext dbFiles;

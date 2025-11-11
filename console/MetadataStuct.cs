@@ -6,6 +6,16 @@ using System.Threading.Tasks;
 
 namespace ImageDB
 {
+
+    /// <summary>
+    /// Represents the collection of Metadata Working Group (MWG) types used by the ImageDB project.
+    /// This container class groups nested types that describe applied dimensions,
+    /// rectangular areas, region information and lists, and collection metadata.
+    /// These types are intended for serialization and data transfer of image
+    /// metadata such as region coordinates, units, names, and collection URIs.
+    /// Ref: https://web.archive.org/web/20120131102845/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf
+    /// </summary>
+    /// 
     internal class MetadataStuct
     {
 
