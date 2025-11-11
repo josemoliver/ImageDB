@@ -7,6 +7,10 @@ using System.Threading.Tasks;
 
 namespace ImageDB
 {
+    /// <summary>
+    /// LocationIdService: normalizes and persists location identifiers and names,
+    /// ensuring unique Location records and managing RelationLocation links to Image records.
+    /// </summary>
     public class LocationIdService
     {
         private readonly CDatabaseImageDBsqliteContext dbFiles;
