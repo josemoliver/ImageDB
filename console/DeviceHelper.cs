@@ -144,7 +144,8 @@ namespace ImageDB
                 { "MOTO", "1.2 MP" },
                 { "samsung", "SM-G930P"},
                 { "RICOH", "RICOH THETA SC2" },
-                { "SAMSUNG", "SAMSUNG-SGH-I337" }
+                { "SAMSUNG", "SAMSUNG-SGH-I337" },
+                { "NIKON", "COOLPIX AW100" }
             };
         }
 
@@ -292,6 +293,7 @@ namespace ImageDB
             { "HEWLETT PACKARD", "HP" },
             { "HEWLETT-PACKARD", "HP" },
             { "JENIMAGE", "Jenimage" },
+            { "JENOPTIFIED", "Jenoptified" },
             { "JK IMAGING", "JK Imaging" },
             { "HITACHI LIVING SYSTEMS", "Hitachi" },
             { "KONICA MINOLTA", "Konica Minolta" },
@@ -314,6 +316,7 @@ namespace ImageDB
             { "OLYMPUS OPTICAL", "Olympus" },
             { "PANTECH WIRELESS", "Pantech" },
             { "PENTACON GERMANY", "Pentacon" },
+            { "Q6065BSNAXHZ33504", "Samsung" },
             { "PENTAX CORPORATION", "Pentax" },
             { "RESEARCH IN MOTION", "RIM" },
             { "RICOH IMAGING", "Ricoh" },
@@ -338,6 +341,9 @@ namespace ImageDB
         private static readonly Dictionary<string, string> CameraModelMap = new(StringComparer.OrdinalIgnoreCase)
         {
             { "POWERSHOT", "PowerShot " },
+            { "SAMSUNG", "Samsung" },
+            { "KODAK", "Kodak " },
+            { "POLARIOD", "Polaroid " },
             { "FINEPIX" , "FinePix "},
             { "REBEL", "Rebel " },
             { "COOLPIX", "Coolpix " },
@@ -419,43 +425,36 @@ namespace ImageDB
             deviceMake = deviceMake.Replace("?", "");
             deviceModel = deviceModel.Replace("?", "");
 
+            // Replace underscores with spaces in device make and model
+            deviceMake = deviceMake.Replace("_", " ");
+            deviceModel = deviceModel.Replace("_", " ");
+
             // Trim whitespace from device make and model
             deviceMake = deviceMake.Trim();
             deviceModel = deviceModel.Trim();
 
             if (deviceModel == "*") { deviceModel = String.Empty; }
 
-            string[] removePatterns =
-            {
-                @"\s*TECHNOLOGY\s*CO\.?,?\s*LTD\.?",
-                @"\s*ELECTRIC\s*CO\.?,?\s*LTD\.?",
-                @"\s*IMAGING\s*CORP\.?",
-                @"\s*CAMERA\s*CORP\.?",
-                @"\s*CAMERA\s*GMBH",
-                @"\s*OPTICAL\s*CO\.?,?\s*LTD\.?",
-                @"\s*CORPORATION",
-                @"\s*COMPANY",
-                @"\s*INTERNATIONAL\s*INC\.?",
-                @"\s*GMBH",
-                @"\s*CORP.",
-                @"\s*INC.",
-                @"\s*CO\.?,?\s*LTD\.?",
-                @"\s*LTD.",
-                @"\s*CO.",
-                @"\(C\)",
-                @"\(R\)",
-                @"\.",
-                @",",
-                @"\*"
+
+            // List of common suffixes
+            string[] suffixes = {
+                "TECHNOLOGY", "ELECTRIC", "IMAGING", "CAMERA", "OPTICAL",
+                "CORPORATION", "COMPANY", "INTERNATIONAL", "GMBH",
+                "CORP", "INC", "CO", "LTD", "\\(C\\)", "\\(R\\)"
             };
 
-            foreach (var pattern in removePatterns)
-            {
-                deviceModel = Regex.Replace(deviceModel, pattern, "", RegexOptions.IgnoreCase);
-            }
-            deviceModel = Regex.Replace(deviceModel, @"\s+", " ").Trim();
+            // Build a single regex pattern to remove any trailing suffix combination
+            string pattern = @"(?:\b(?:" + string.Join("|", suffixes) + @")(?:(?:[\s\.,\-]*)?))*$";
 
-            deviceModel = deviceModel.Trim();
+            // Apply regex to remove suffixes at the end
+            deviceMake = Regex.Replace(deviceMake, pattern, "", RegexOptions.IgnoreCase);
+
+            // Final cleanup of punctuation and whitespace
+            deviceMake = Regex.Replace(deviceMake, @"[.,]", "");
+            deviceMake = Regex.Replace(deviceMake, @"\s+", " ").Trim();
+
+
+            deviceMake = deviceMake.Trim();
             
             // If both device make and model are empty, return an empty string
             if (string.IsNullOrWhiteSpace(deviceModel) && string.IsNullOrWhiteSpace(deviceMake))

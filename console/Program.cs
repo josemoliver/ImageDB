@@ -1022,45 +1022,54 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             if (structJsonMetadata != String.Empty)
             {
                 // Deserialize the JSON string into a MetadataStuct.Struct object
-                MetadataStuct.Struct structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                if (structMeta != null)
+                try
                 {
-                    try
-                    {
-                        if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
-                        {
-                            foreach (var reg in structMeta.RegionInfo.RegionList)
-                            {
-                                await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Handle the exception - Log the error message
-                        Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
-                        LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
-                    }
+                    MetadataStuct.Struct structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                    try
+                    if (structMeta != null)
                     {
-                        if (structMeta?.Collections?.Any() == true)
+                        try
                         {
-                            foreach (var col in structMeta.Collections)
+                            if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
                             {
-                                await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
+                                foreach (var reg in structMeta.RegionInfo.RegionList)
+                                {
+                                    await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D);
+                                }
                             }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Handle the exception - Log the error message
-                        Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
-                        LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                        catch (Exception ex)
+                        {
+                            // Handle the exception - Log the error message
+                            Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
+                            LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                        }
+
+                        try
+                        {
+                            if (structMeta?.Collections?.Any() == true)
+                            {
+                                foreach (var col in structMeta.Collections)
+                                {
+                                    await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Handle the exception - Log the error message
+                            Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
+                            LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                        }
                     }
                 }
+                catch (Exception ex)
+                {
+                    // Handle the exception - Log the error message
+                    Console.WriteLine("[ERROR] - Failed to deserialize struct metadata: " + ex.Message);
+                    LogEntry(0, sourceFile, "[Unable to read MWG Region/Collection] - " + ex.ToString());
 
+                }
             }
 
             // XIII. Get Descriptive tags/keywords
