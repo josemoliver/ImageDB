@@ -144,7 +144,8 @@ namespace ImageDB
                 { "MOTO", "1.2 MP" },
                 { "samsung", "SM-G930P"},
                 { "RICOH", "RICOH THETA SC2" },
-                { "SAMSUNG", "SAMSUNG-SGH-I337" }
+                { "SAMSUNG", "SAMSUNG-SGH-I337" },
+                { "NIKON", "COOLPIX AW100" }
             };
         }
 
@@ -188,6 +189,7 @@ namespace ImageDB
             { "GOOGLE", "Google" },
             { "GRANDTECH", "GrandTech" },
             { "HASSELBLAD", "Hasselblad" },
+            { "HELIO", "Helio" },
             { "HEWLETT-PACKARD", "HP" },
             { "HITACHI", "Hitachi" },
             { "HOLGA", "Holga" },
@@ -204,6 +206,7 @@ namespace ImageDB
             { "KONICA MINOLTA", "Konica Minolta" },
             { "KONICA", "Konica" }, 
             { "KYOCERA", "Kyocera" },
+            { "LEAF", "Leaf" },
             { "LEICA", "Leica" },
             { "LENOVO", "Lenovo" },
             { "LG", "LG" },
@@ -231,6 +234,7 @@ namespace ImageDB
             { "ONEPLUS", "OnePlus" },
             { "PANASONIC", "Panasonic" },
             { "PANTECH", "Pantech" },
+            { "PALM", "Palm" },
             { "PAPAGO", "Papago" },
             { "PARROT", "Parrot" },
             { "PENTACON", "Pentacon" },
@@ -259,8 +263,9 @@ namespace ImageDB
             { "THINKWARE", "Thinkware" },
             { "TOKINA", "Tokina" },
             { "TOSHIBA", "Toshiba" },
-            { "TRAVELER OPTICAL", "Traveler Optical" },
+            { "TRAVELER", "Traveler" },
             { "VIOFO", "Viofo" },
+            { "VISTAQUEST", "VistaQuest" },
             { "VIVO", "Vivo" },
             { "VIVAX", "Vivax" },
             { "VIVITAR", "Vivitar" },
@@ -292,6 +297,7 @@ namespace ImageDB
             { "HEWLETT PACKARD", "HP" },
             { "HEWLETT-PACKARD", "HP" },
             { "JENIMAGE", "Jenimage" },
+            { "JENOPTIFIED", "Jenoptified" },
             { "JK IMAGING", "JK Imaging" },
             { "HITACHI LIVING SYSTEMS", "Hitachi" },
             { "KONICA MINOLTA", "Konica Minolta" },
@@ -305,15 +311,19 @@ namespace ImageDB
             { "MADE BY POLAROID", "Polaroid" },
             { "MAGINON", "Magion" },
             { "MEDION OPTICAL", "MEDION" },
-            { "Mamiya-OP", "Mamiya" }, 
+            { "MAMIYA", "Mamiya" },
+            { "MAMIYA-OP", "Mamiya" }, 
             { "MOTOROLA KOREA", "Motorola" },
             { "MOTOROLA MOBILITY", "Motorola" },
+            { "MSM6500", "Samsung" },
             { "MINOLTA", "Minolta" },
             { "OM Digital Solutions", "OM System" },
             { "OLYMPUS IMAGING", "Olympus" },
             { "OLYMPUS OPTICAL", "Olympus" },
+            { "OPPO", "OPPO" },
             { "PANTECH WIRELESS", "Pantech" },
             { "PENTACON GERMANY", "Pentacon" },
+            { "Q6065BSNAXHZ33504", "Samsung" },
             { "PENTAX CORPORATION", "Pentax" },
             { "RESEARCH IN MOTION", "RIM" },
             { "RICOH IMAGING", "Ricoh" },
@@ -338,6 +348,9 @@ namespace ImageDB
         private static readonly Dictionary<string, string> CameraModelMap = new(StringComparer.OrdinalIgnoreCase)
         {
             { "POWERSHOT", "PowerShot " },
+            { "SAMSUNG", "Samsung" },
+            { "KODAK", "Kodak " },
+            { "POLARIOD", "Polaroid " },
             { "FINEPIX" , "FinePix "},
             { "REBEL", "Rebel " },
             { "COOLPIX", "Coolpix " },
@@ -350,6 +363,17 @@ namespace ImageDB
             { "OFFICEJET", "OfficeJet " },
             { "DIMAGE ", "DiMAGE " },
             { "PANORAMIC", "Panoramic " },
+            { "EXILIM", "Exilim " },
+            { "GALAXY", "Galaxy " },
+            { "PIXMA", "Pixma " },
+            { "IXUS", "IXUS " },
+            { "IPHONE", "iPhone " },
+            { "EOS", "EOS " },
+            { "NEX", "NEX " },
+            { "SURESHOT", "SureShot " },
+            { "SMARTSHOT", "SmartShot " },
+            { "ZOOMATE", "Zoomate " },
+            { "VIVITAR", "Vivitar " },
             { "VIVICAM", "ViviCam " },
             { "DROID", "Droid " },
             { "LUMIA", "Lumia " },
@@ -357,11 +381,12 @@ namespace ImageDB
             { "STYLUS", "Stylus " },
             { "MAGICSCAN", "MagicScan" },
             { "EASYSHARE", "EasyShare" },
+            { "HYPERFIRE", "HyperFire" },
             { "DIGITAL SCIENCE", "Digital Science" },
-            { "PLAYFULL", "Playfull" },
-            { "PLAYSPORT", "PlaySport" },
-            { "PIXPRO", "PixPro" },
-            { "COOLSCAN", "Coolscan" },
+            { "PLAYFULL", "Playfull " },
+            { "PLAYSPORT", "PlaySport " },
+            { "PIXPRO", "PixPro " },
+            { "COOLSCAN", "Coolscan " },
             { "IZONE", "iZone" },
             { "ALPHA SWEET DIGITAL", "Alpha Sweet Digital" },
             { "SPEED STAR", "Speed Star" },
@@ -419,43 +444,36 @@ namespace ImageDB
             deviceMake = deviceMake.Replace("?", "");
             deviceModel = deviceModel.Replace("?", "");
 
+            // Replace underscores with spaces in device make and model
+            deviceMake = deviceMake.Replace("_", " ");
+            deviceModel = deviceModel.Replace("_", " ");
+
             // Trim whitespace from device make and model
             deviceMake = deviceMake.Trim();
             deviceModel = deviceModel.Trim();
 
             if (deviceModel == "*") { deviceModel = String.Empty; }
 
-            string[] removePatterns =
-            {
-                @"\s*TECHNOLOGY\s*CO\.?,?\s*LTD\.?",
-                @"\s*ELECTRIC\s*CO\.?,?\s*LTD\.?",
-                @"\s*IMAGING\s*CORP\.?",
-                @"\s*CAMERA\s*CORP\.?",
-                @"\s*CAMERA\s*GMBH",
-                @"\s*OPTICAL\s*CO\.?,?\s*LTD\.?",
-                @"\s*CORPORATION",
-                @"\s*COMPANY",
-                @"\s*INTERNATIONAL\s*INC\.?",
-                @"\s*GMBH",
-                @"\s*CORP.",
-                @"\s*INC.",
-                @"\s*CO\.?,?\s*LTD\.?",
-                @"\s*LTD.",
-                @"\s*CO.",
-                @"\(C\)",
-                @"\(R\)",
-                @"\.",
-                @",",
-                @"\*"
+
+            // List of common suffixes
+            string[] suffixes = {
+                "TECHNOLOGY", "ELECTRIC", "IMAGING", "CAMERA", "OPTICAL",
+                "CORPORATION", "COMPANY", "INTERNATIONAL", "GMBH",
+                "CORP", "INC", "CO", "LTD", "\\(C\\)", "\\(R\\)"
             };
 
-            foreach (var pattern in removePatterns)
-            {
-                deviceModel = Regex.Replace(deviceModel, pattern, "", RegexOptions.IgnoreCase);
-            }
-            deviceModel = Regex.Replace(deviceModel, @"\s+", " ").Trim();
+            // Build a single regex pattern to remove any trailing suffix combination
+            string pattern = @"(?:\b(?:" + string.Join("|", suffixes) + @")(?:(?:[\s\.,\-]*)?))*$";
 
-            deviceModel = deviceModel.Trim();
+            // Apply regex to remove suffixes at the end
+            deviceMake = Regex.Replace(deviceMake, pattern, "", RegexOptions.IgnoreCase);
+
+            // Final cleanup of punctuation and whitespace
+            deviceMake = Regex.Replace(deviceMake, @"[.,]", "");
+            deviceMake = Regex.Replace(deviceMake, @"\s+", " ").Trim();
+
+
+            deviceMake = deviceMake.Trim();
             
             // If both device make and model are empty, return an empty string
             if (string.IsNullOrWhiteSpace(deviceModel) && string.IsNullOrWhiteSpace(deviceMake))
