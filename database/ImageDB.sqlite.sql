@@ -343,7 +343,7 @@ WHERE length(Location)=0 AND length(StateProvince)=0 AND length(Country)=0 AND l
 DROP VIEW IF EXISTS "vPeopleTagCount";
 CREATE VIEW vPeopleTagCount
 AS 
-select PeopleTag.PersonName, PeopleTag.PeopleTagID, COUNT(relationPeopleTag.PeopleTagId) AS 'FaceCount' 
+select PeopleTag.PeopleTagID,PeopleTag.PersonName, IFNULL(COUNT(relationPeopleTag.PeopleTagId),0) AS 'PeopleTagCount' 
 from PeopleTag 
 LEFT JOIN relationPeopleTag on relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
 GROUP BY PeopleTag.PersonName
@@ -367,6 +367,33 @@ ORDER BY i.ImageId;
 DROP VIEW IF EXISTS "vPhotoDates";
 CREATE VIEW vPhotoDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
+DROP VIEW IF EXISTS "vPhotoLibraries";
+CREATE VIEW vPhotoLibraries AS
+SELECT 
+    p.PhotoLibraryId,
+	p.Folder,
+    COUNT(i.ImageId) AS ImageCount,
+	COUNT(DISTINCT i.Album) AS AlbumCount,
+    IFNULL(SUM(i.Filesize), 0) AS TotalFilesize,
+    COUNT(DISTINCT i.Device) AS UniqueDeviceCount,
+	COUNT(DISTINCT i.Creator) AS DistinctCreatorCount,
+    IFNULL(COUNT(rpt.PeopleTagId), 0) AS PeopleTagCount,
+	IFNULL(COUNT(rt.TagId), 0) AS DescriptiveTagCount
+FROM 
+    PhotoLibrary p
+LEFT JOIN 
+    Image i 
+    ON p.PhotoLibraryId = i.PhotoLibraryId
+LEFT JOIN 
+    relationPeopleTag rpt 
+    ON i.ImageId = rpt.ImageId
+LEFT JOIN 
+    relationTag rt 
+    ON i.ImageId = rt.ImageId
+GROUP BY 
+    p.PhotoLibraryId
+ORDER BY 
+    p.PhotoLibraryId;
 DROP VIEW IF EXISTS "vRatingCounts";
 CREATE VIEW vRatingCounts AS
 select Rating, Count(ImageId) As ImageCount from Image
