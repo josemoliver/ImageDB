@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
+using LumenWorks.Framework.IO.Csv;
 
 namespace ImageDB
 {
@@ -25,87 +26,61 @@ namespace ImageDB
             Console.WriteLine("----------------------");
 
             string csvPath = "Sample_DeviceList.csv";
-            Dictionary<string, string> DeviceTestSet = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var DeviceTestSet = new List<KeyValuePair<string, string>>();
 
             if (File.Exists(csvPath))
             {
                 try
                 {
-                    var lines = File.ReadAllLines(csvPath);
-                    int lineIndex = 0;
-                    foreach (var rawLine in lines)
+                    // Detect whether first non-empty line looks like a header containing "make" or "model"
+                    bool hasHeader = false;
+                    using (var peekReader = new StreamReader(csvPath))
                     {
-                        lineIndex++;
-                        if (string.IsNullOrWhiteSpace(rawLine)) continue;
-
-                        // If first non-empty line looks like a header, skip it
-                        if (lineIndex == 1)
+                        string firstNonEmpty;
+                        do
                         {
-                            var header = rawLine.Trim();
+                            firstNonEmpty = peekReader.ReadLine();
+                        } while (firstNonEmpty != null && string.IsNullOrWhiteSpace(firstNonEmpty));
+
+                        if (!string.IsNullOrWhiteSpace(firstNonEmpty))
+                        {
+                            var header = firstNonEmpty.Trim();
                             if (header.IndexOf("make", StringComparison.OrdinalIgnoreCase) >= 0 ||
                                 header.IndexOf("model", StringComparison.OrdinalIgnoreCase) >= 0)
                             {
+                                hasHeader = true;
+                            }
+                        }
+                    }
+
+                    // Use LumenWorks CsvReader to parse the file (handles quoted fields and embedded commas)
+                    using (var sr = new StreamReader(csvPath))
+                    using (var csv = new CsvReader(sr, hasHeader))
+                    {
+                        while (csv.ReadNextRecord())
+                        {
+                            // Read maker (first field)
+                            string maker = csv.FieldCount > 0 ? (csv[0] ?? string.Empty).Trim() : string.Empty;
+                            if (string.IsNullOrWhiteSpace(maker))
+                            {
+                                // skip records without a maker
                                 continue;
                             }
-                        }
 
-                        // Simple CSV parsing: handle quoted fields and commas inside quotes
-                        List<string> fields = new List<string>();
-                        bool inQuotes = false;
-                        var sb = new System.Text.StringBuilder();
-                        for (int i = 0; i < rawLine.Length; i++)
-                        {
-                            char c = rawLine[i];
-                            if (c == '"' )
+                            // Join remaining fields into the model to preserve stray commas inside model
+                            string model = string.Empty;
+                            if (csv.FieldCount > 1)
                             {
-                                // Toggle quotes unless it's an escaped double quote ("")
-                                if (inQuotes && i + 1 < rawLine.Length && rawLine[i + 1] == '"')
+                                var parts = new List<string>(csv.FieldCount - 1);
+                                for (int i = 1; i < csv.FieldCount; i++)
                                 {
-                                    sb.Append('"');
-                                    i++; // skip escaped quote
+                                    parts.Add((csv[i] ?? string.Empty).Trim());
                                 }
-                                else
-                                {
-                                    inQuotes = !inQuotes;
-                                }
+                                model = string.Join(",", parts).Trim();
                             }
-                            else if (c == ',' && !inQuotes)
-                            {
-                                fields.Add(sb.ToString());
-                                sb.Clear();
-                            }
-                            else
-                            {
-                                sb.Append(c);
-                            }
-                        }
-                        fields.Add(sb.ToString());
 
-                        // Normalize fields: trim and remove surrounding quotes
-                        for (int f = 0; f < fields.Count; f++)
-                        {
-                            var s = fields[f].Trim();
-                            if (s.Length >= 2 && s.StartsWith("\"") && s.EndsWith("\""))
-                            {
-                                s = s.Substring(1, s.Length - 2).Replace("\"\"", "\"");
-                            }
-                            fields[f] = s.Trim();
-                        }
-
-                        if (fields.Count == 0) continue;
-
-                        string maker = fields[0];
-                        string model = string.Empty;
-                        if (fields.Count >= 2)
-                        {
-                            // Join remaining fields as model (handles stray commas)
-                            model = string.Join(",", fields.Skip(1)).Trim();
-                        }
-
-                        // Add to test set (avoid duplicates)
-                        if (!DeviceTestSet.ContainsKey(maker))
-                        {
-                            DeviceTestSet.Add(maker, model);
+                            // Add to test set (allow duplicates)
+                            DeviceTestSet.Add(new KeyValuePair<string, string>(maker, model));
                         }
                     }
                 }
@@ -129,23 +104,22 @@ namespace ImageDB
             Console.WriteLine("----------------------");
         }
 
-        // Fallback default test set (original hard-coded values)
-        private static Dictionary<string, string> GetDefaultTestSet()
+        private static List<KeyValuePair<string, string>> GetDefaultTestSet()
         {
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            return new List<KeyValuePair<string, string>>
             {
-                { "Allied Vision Technologies", "GT3300C (02-2623A)" },
-                { "Apple", "iPhone 11 Pro Max" },
-                { "CASIO COMPUTER CO.,LTD", "EX-S770" },
-                { "EASTMAN KODAK COMPANY", "KODAK CX7430 ZOOM DIGITAL CAMERA" },
-                { "FUJIFILM", "FinePix F50fd" },
-                { "KONICA MINOLTA", "DiMAGE X1" },
-                { "Kodak", "" },
-                { "MOTO", "1.2 MP" },
-                { "samsung", "SM-G930P"},
-                { "RICOH", "RICOH THETA SC2" },
-                { "SAMSUNG", "SAMSUNG-SGH-I337" },
-                { "NIKON", "COOLPIX AW100" }
+                new KeyValuePair<string, string>("Allied Vision Technologies", "GT3300C (02-2623A)"),
+                new KeyValuePair<string, string>("Apple", "iPhone 11 Pro Max"),
+                new KeyValuePair<string, string>("CASIO COMPUTER CO.,LTD", "EX-S770"),
+                new KeyValuePair<string, string>("EASTMAN KODAK COMPANY", "KODAK CX7430 ZOOM DIGITAL CAMERA"),
+                new KeyValuePair<string, string>("FUJIFILM", "FinePix F50fd"),
+                new KeyValuePair<string, string>("KONICA MINOLTA", "DiMAGE X1"),
+                new KeyValuePair<string, string>("Kodak", ""),
+                new KeyValuePair<string, string>("MOTO", "1.2 MP"),
+                new KeyValuePair<string, string>("Canon", "EOS-1D"),
+                new KeyValuePair<string, string>("RICOH", "RICOH THETA SC2"),
+                new KeyValuePair<string, string>("SAMSUNG", "SAMSUNG-SGH-I337"),
+                new KeyValuePair<string, string>("NIKON", "COOLPIX AW100")
             };
         }
 
@@ -325,6 +299,7 @@ namespace ImageDB
             { "PENTACON GERMANY", "Pentacon" },
             { "Q6065BSNAXHZ33504", "Samsung" },
             { "PENTAX CORPORATION", "Pentax" },
+            { "PENTAX ", "Pentax" },
             { "RESEARCH IN MOTION", "RIM" },
             { "RICOH IMAGING", "Ricoh" },
             { "RICOH IMAGING COMPANY", "Ricoh" },
@@ -368,8 +343,6 @@ namespace ImageDB
             { "PIXMA", "Pixma " },
             { "IXUS", "IXUS " },
             { "IPHONE", "iPhone " },
-            { "EOS", "EOS " },
-            { "NEX", "NEX " },
             { "SURESHOT", "SureShot " },
             { "SMARTSHOT", "SmartShot " },
             { "ZOOMATE", "Zoomate " },
@@ -383,6 +356,7 @@ namespace ImageDB
             { "EASYSHARE", "EasyShare" },
             { "HYPERFIRE", "HyperFire" },
             { "DIGITAL SCIENCE", "Digital Science" },
+            { "PENTAX ","Pentax " },
             { "PLAYFULL", "Playfull " },
             { "PLAYSPORT", "PlaySport " },
             { "PIXPRO", "PixPro " },
@@ -395,7 +369,9 @@ namespace ImageDB
             { "ASUS_", "Asus " },
             { "EYE_Q", "Eye-Q " },
             { "EYEQ", "Eye-Q " },
-            { " MEGAPIXEL", " Megapixel" }, 
+            { " EOS", " EOS " },
+            { " MEGAPIXEL", " Megapixel" },
+            { " MEGAPIXELS", " Megapixels" },
             { " SENSOR", " Sensor" },
             { " ZOOM", " Zoom" },
             { " FILM SCANNER", " Film Scanner" },
@@ -404,6 +380,7 @@ namespace ImageDB
             { " DIGITAL CAMERA", " Digital Camera" },
             { " DIGITAL", " Digital" },
             { " CAMERA", " Camera" },
+            { " WIRELESS", " Wireless" },
             { " DUAL LENS", " Dual Lens" },
             { " CELLPHONE", " Cellphone" }
         };
@@ -562,6 +539,7 @@ namespace ImageDB
             if (device.StartsWith("HTC_")) { device = device.Replace("HTC_", "HTC "); }
             if (device.StartsWith("ZTE-")) { device = device.Replace("ZTE-", "ZTE "); }
             if (device.StartsWith("hp ")) { device = device.Replace("hp ", "HP "); }
+            if (device.StartsWith("Canon ")) { device = device.Replace("EOS-", "EOS "); }
 
             return device;
         }
