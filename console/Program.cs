@@ -284,7 +284,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         // Flag to suspend the scan once a file with no updates pending found.
         bool suspendScan = false;
         
-        Console.WriteLine("[BATCH] - Started job. " + imageFiles.Count + " files Found.");
+        Console.WriteLine("[BATCH] - Started job # "+ batchID+" (" + imageFiles.Count + " files found.)");
 
         // Iterate over each image file
         for (int i = 0; i < imageFiles.Count; i++)
@@ -503,9 +503,15 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             dbFiles.Database.ExecuteSqlRaw(deleteRegion);
             dbFiles.Database.ExecuteSqlRaw(deleteCollectionQuery);
 
-            Console.WriteLine("[BATCH] - Completed batch Id: " + batchID);
+            Console.WriteLine("[BATCH] - Completed job # " + batchID);
             Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
-            
+
+            // Warn if not all files were processed
+            if (imageFiles.Count != filesAdded + filesUpdated + filesSkipped + filesError)
+            {
+              Console.WriteLine("[WARNING] - New files may have been skipped, consider running in 'normal' mode for a thorough file scan");
+            }
+
             // Get elapsed time in seconds
             int elapsedTime = 0;
             string endDateTime = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
@@ -558,6 +564,8 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     }
                 }
             }
+
+            Console.WriteLine("");
         }
 
     }

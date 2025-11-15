@@ -50,8 +50,8 @@ The Image Database Management Tool provides the following command-line options:
 | :------------     | :--------------------------------------------------------- | 
 | `normal`     | Scans all files and compares any existing file using SHA1 hash. Slowest scanning mode but the most reliable.|
 | `date`       | Scans all files and updates the files based on the file modified date property. Faster scanning but if any file was updated and the file modified date is not, the app will not update the metatada on the database. |
-|  `quick` | Scans files based on file modified sorted by descending modified date. If unmodified file if found, the rest are skipped. |
-|  `reload` |No scan is performed of the files, existing metadata scans are re-processed at the database level. This mode is useful for updating  the database tables after any code modification. |
+|  `quick` | Scans files based on file modified date, in order of most recently modified files. When a file is deemed unmodified by date, the rest are skipped. |
+|  `reload` |No scan is performed of the file metadata. Metadata obtained from the previous scan is re-processed at the database level. This mode is useful for updating the database tables after any code modification. |
 
 
 To run the tool, use the following command:
@@ -78,7 +78,7 @@ Using a SQLlite database management tool, open the database file so you can anal
 | `Log`  |  Error/Warning logs |
 | `Location`          | Location Identifiers found. If a photo metadata uses IPTC Location Identifiers. Refer to blog post: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/ |
 | `Collection`          | MWG Collections |
-| `MetadataHistory`          | Prior to updating a record on the Image table, the exiftool JSON Metdata is copied to this table for archiving purposes. Say you wish to figure out what metadata fields have been changed by your photo management softare or wish. |
+| `MetadataHistory`          | Prior to updating a record on the Image table, the exiftool JSON Metdata is copied to this table for archiving purposes. Particularly useful to figure out what metadata fields have been changed by your photo management software. |
 | `PeopleTag`  |  People tags. |
 | `PhotoLibrary`  |  Your photo collection main folders. All files and subfolder contained are scan by the tool. |
 | `Tag`  |  Descriptive tags |
@@ -100,7 +100,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Image.Device`     | Combined from IFD0:Make and IFD0:Model |
 | `Image.Latitude`     | Composite:GPSLatitude (Rounded to 6 decimal places) |
 | `Image.Longitude`     | Composite:GPSLongitude (Rounded to 6 decimal places) |
-| `Image.GPSAltitude`     | Composite:GPSAltitude |
+| `Image.Altitude`     | Composite:GPSAltitude |
 | `Image.Location`     | XMP-iptcExt:LocationCreatedLocationName, XMP-iptcExt:LocationCreatedSublocation, XMP-iptcCore:Location, or IPTC:Sub-location  |
 | `Image.City`     | XMP-iptcExt:LocationCreatedCity, XMP-photoshop:City, or IPTC:City |
 | `Image.StateProvince`     | XMP-iptcExt:LocationCreatedProvinceState, XMP-photoshop:State, or IPTC:Province-State  |
@@ -128,6 +128,8 @@ The views are meant to assist in your metadata inspection and analysis. For exam
 
 
 ## Example usage:
+- Duplicate file detection, either by filename or hash value.
+- Identify files with missing metadata, such as dates, captions, geotags, etc.
 - WindowsXP Legacy Image Fields - Prior to better image photo metadata standards, Microsoft introduced as as part of the Windows XP operating system (released in 2001) to store descriptive metadata about images (and some other file types) in a way that supported Unicode text. The WindowsXP XPTitle, XPSubject, XPComment, XPAuthor and XPKeywords are stored in the EXIF tag space, but are not part of the official EXIF standard. They were intended to enable users to tag and search images using Windows Explorer, and are supported still by some applications. Use the vLegacyWindowsXP view to identify files containing data in these fields. Usefull if migrating your photo collection from apps such as Windows Photo Gallery - Refer to blog post: https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/
 - IPTC IIM – Developed in the 1990s, the IPTC IIM metadata standard was widely used in journalism and media. Although it has largely been replaced by newer formats like XMP, it remains supported by many tools for backward compatibility. To view IPTC IIM metadata in your images, use the vLegacy_IPTC_IMM view. 
 - MWG Region mistmatch - Cropping or resizing images can lead to inconsistencies in MWG Region metadata. Refer to page 51 of the MWG Guidance document for details. The vRegionMismatch view checks whether the AppliedToDimensions values in MWG Regions match the actual image dimensions and flags any discrepancies.
