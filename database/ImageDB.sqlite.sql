@@ -375,13 +375,26 @@ SELECT
 FROM Image
 GROUP BY Year, Month
 ORDER BY Year, Month;
-CREATE VIEW vPeopleTagCount
-AS 
-select PeopleTag.PeopleTagID,PeopleTag.PersonName, IFNULL(COUNT(relationPeopleTag.PeopleTagId),0) AS 'PeopleTagCount' 
-from PeopleTag 
-LEFT JOIN relationPeopleTag on relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
-GROUP BY PeopleTag.PersonName
-ORDER BY FaceCount DESC;
+CREATE VIEW vPeopleTagCount AS
+SELECT 
+    PeopleTag.PeopleTagID,
+    PeopleTag.PersonName,
+    IFNULL(COUNT(relationPeopleTag.PeopleTagId), 0) AS PeopleTagCount,
+    MIN(Image.DateTimeTaken) AS MinDate,
+    MAX(Image.DateTimeTaken) AS MaxDate,
+	MIN(json_extract(Metadata, '$.ExifIFD:DateTimeOriginal')) AS MinExifDateTimeOriginal,
+	MAX(json_extract(Metadata, '$.ExifIFD:DateTimeOriginal')) AS MaxExifDateTimeOriginal
+FROM 
+    PeopleTag
+LEFT JOIN 
+    relationPeopleTag ON relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
+LEFT JOIN 
+    Image ON relationPeopleTag.ImageId = Image.ImageId
+GROUP BY 
+    PeopleTag.PeopleTagID,
+    PeopleTag.PersonName
+ORDER BY 
+    PeopleTagCount DESC;
 CREATE VIEW vPeopleTagRegionCountDiff AS
 SELECT i.ImageId,i.Filepath,i.Filename, i.StuctMetadata, peopleTagCount, regionCount
 FROM Image i
