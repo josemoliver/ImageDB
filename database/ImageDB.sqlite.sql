@@ -215,6 +215,34 @@ json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsW') AS RWidth,
 json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsH') AS RHeight,
 Metadata
 FROM Image;
+CREATE VIEW vGeneralMetadata AS
+SELECT 
+    Image.Filepath,
+    Image.Title,
+    Image.Description,
+	json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,
+    Image.DateTimeTakenTimeZone,
+	Image.Creator,
+	Image.Copyright,
+	vTagsPerImage.Tags AS Tags,
+	vPeopleTagsPerImage.PeopleTags AS PeopleTags,
+    Image.Location,
+    Image.City,
+    Image.StateProvince,
+    Image.Country,
+    CASE 
+        WHEN Image.Latitude IS NULL AND Image.Longitude IS NULL THEN ''
+        ELSE COALESCE(Image.Latitude, '') || ',' || COALESCE(Image.Longitude, '')
+    END AS GeoCoordinates
+    
+FROM 
+    Image
+LEFT JOIN 
+    vTagsPerImage ON Image.ImageId = vTagsPerImage.ImageId
+LEFT JOIN 
+    vPeopleTagsPerImage ON Image.ImageId = vPeopleTagsPerImage.ImageId
+GROUP BY 
+    Image.ImageId;
 CREATE VIEW vGeotags AS
 SELECT Location,City,StateProvince,Country,CountryCode, AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude, Count(ImageId) AS FileCount
 FROM Image
@@ -369,6 +397,19 @@ LEFT JOIN (
 ) r ON i.ImageId = r.ImageId
 WHERE IFNULL(rpt.peopleTagCount, 0) != IFNULL(r.regionCount, 0)
 ORDER BY i.ImageId;
+CREATE VIEW vPeopleTagsPerImage AS
+SELECT 
+	Image.ImageId,
+    Image.Filepath,
+    COALESCE(GROUP_CONCAT(PeopleTag.PersonName, ';'), '') AS PeopleTags
+FROM 
+    Image
+LEFT JOIN 
+    relationPeopleTag ON Image.ImageId = relationPeopleTag.ImageId
+LEFT JOIN 
+    PeopleTag ON relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
+GROUP BY 
+    Image.ImageId;
 CREATE VIEW vPhotoDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
 CREATE VIEW vPhotoLibraries AS
@@ -428,6 +469,32 @@ json_extract(Metadata, '$.XMP-iptcExt:LocationShownCountryName') AS CountryName,
 json_extract(Metadata, '$.XMP-iptcExt:LocationShownLocationId') AS LocationId,
 Metadata
 FROM Image;
+CREATE VIEW vTagCount
+AS 
+SELECT Tag.TagID,Tag.TagName, IFNULL(COUNT(relationTag.TagId),0) AS 'TagCount' 
+FROM Tag 
+LEFT JOIN relationTag on relationTag.TagId = Tag.TagId
+GROUP BY Tag.TagName
+ORDER BY TagCount DESC;
+CREATE VIEW vTagsPerImage AS
+SELECT 
+	Image.ImageId,
+    Image.Filepath,
+    COALESCE(GROUP_CONCAT(Tag.TagName, ';'), '') AS Tags
+FROM 
+    Image
+LEFT JOIN 
+    relationTag ON Image.ImageId = relationTag.ImageId
+LEFT JOIN 
+    Tag ON relationTag.TagId = Tag.TagId
+GROUP BY 
+    Image.ImageId;
+CREATE VIEW vTagsSansPeople AS
+SELECT TagName
+FROM Tag
+WHERE TagName NOT IN (
+    SELECT PersonName FROM PeopleTag
+);
 CREATE VIEW vTitles AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.XMP-dc:Title') AS Title,
