@@ -93,7 +93,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | :------------     | :--------------------------------------------------------- | 
 | `Image.Title`     | XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle  |
 | `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription,IFD0:XPComment,IFD0:XPSubject,IFD0:XPComment or IPTC:Headline |
-| `Image.Album`     | Derived from the PhotoLibrary subfolder |
+| `Image.Album`     | Derived from the PhotoLibrary subfolder(s). Nested subfolder names are concatenated with a dash (-).  |
 | `Image.Rating`     | XMP-xmp:Rating, or IFD0:Rating |
 | `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
 | `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |
@@ -107,7 +107,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Image.Country`     | XMP-iptcExt:LocationCreatedCountryName, XMP-photoshop:Country or IPTC:Country-PrimaryLocationName |
 | `Image.CountryCode`     | XMP-iptcExt:LocationCreatedCountryCode, XMP-iptcCore:CountryCode or IPTC:Country-PrimaryLocationCode  |
 | `Image.Creator`     | XMP-dc:Creator, IPTC:By-line, IFD0:Artist, XMP-tiff:Artist, or IFD0:XPAuthor |
-| `Image.Copyright`     | XMP-dc:Rights,IPTC:CopyrightNotice, or IFD0:Copyright  |
+| `Image.Copyright`     | XMP-dc:Rights, IPTC:CopyrightNotice, or IFD0:Copyright  |
 | `PeopleTag.PersonName`     | Merged names from XMP-MP:RegionPersonDisplayName, XMP-mwg-rs:RegionName, and XMP-iptcExt:PersonInImage  |
 | `Tag.TagName`     | Merged values from IPTC:Keywords, XMP-dc:Subject, and IFD0:XPKeywords  |
 | `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
