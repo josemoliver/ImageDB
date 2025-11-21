@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ImageDB.Models;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -49,6 +50,12 @@ namespace ImageDB
             public string Type { get; set; }
         }
 
+        public class PersonInImageWDetails
+        {
+            public List<String> PersonId { get; set; } = new List<String>();
+            public string PersonName { get; set; }
+        }
+
         public class Collection
         {
             public string CollectionName { get; set; }
@@ -60,6 +67,7 @@ namespace ImageDB
             public string SourceFile { get; set; }
             public RegionInfo RegionInfo { get; set; }
             public List<Collection> Collections { get; set; }
+            public List<PersonInImageWDetails> PersonInImageWDetails { get; set; }
         }
     }
 }
