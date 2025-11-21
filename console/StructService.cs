@@ -18,19 +18,19 @@ namespace ImageDB
 
         public async Task DeleteRegions(int imageId)
         {
-            // Delete all relations for the given imageId
-            var relationsToDelete = dbFiles.Regions
+            // Delete all regions for the given imageId
+            var regionsToDelete = dbFiles.Regions
                 .Where(r => r.ImageId == imageId)
                 .ToList();
 
-            if (relationsToDelete.Count == 0)
+            if (regionsToDelete.Count == 0)
             {
                 return;
             }
 
-            foreach (var relation in relationsToDelete)
+            foreach (var region in regionsToDelete)
             {
-                dbFiles.Regions.Remove(relation);
+                dbFiles.Regions.Remove(region);
             }
 
             dbFiles.SaveChanges();
@@ -38,19 +38,59 @@ namespace ImageDB
 
         public async Task DeleteCollections(int imageId)
         {
-            // Delete all relations for the given imageId
-            var relationsToDelete = dbFiles.Collections
+            // Delete all collections for the given imageId
+            var collectionsToDelete = dbFiles.Collections
                 .Where(c => c.ImageId == imageId)
                 .ToList();
             
-            if (relationsToDelete.Count == 0)
+            if (collectionsToDelete.Count == 0)
             {
                 return;
             }
-            foreach (var relation in relationsToDelete)
+            foreach (var collection in collectionsToDelete)
             {
-                dbFiles.Collections.Remove(relation);
+                dbFiles.Collections.Remove(collection);
             }
+            dbFiles.SaveChanges();
+        }
+
+        public async Task DeleteLocations(int imageId)
+        {
+            // Delete all relations for the given imageId
+            var locationsToDelete = dbFiles.Locations
+                .Where(r => r.ImageId == imageId)
+                .ToList();
+
+            if (locationsToDelete.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var location in locationsToDelete)
+            {
+                dbFiles.Locations.Remove(location);
+            }
+
+            dbFiles.SaveChanges();
+        }
+
+        public async Task DeletePersons(int imageId)
+        {
+            // Delete all relations for the given imageId
+            var personsToDelete = dbFiles.Persons
+                .Where(r => r.ImageId == imageId)
+                .ToList();
+
+            if (personsToDelete.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var person in personsToDelete)
+            {
+                dbFiles.Persons.Remove(person);
+            }
+
             dbFiles.SaveChanges();
         }
 
@@ -102,6 +142,41 @@ namespace ImageDB
             };
 
             dbFiles.Collections.Add(collection);
+            await dbFiles.SaveChangesAsync();
+        }
+
+
+        public async Task AddLocation(int imageId, string? locationName, string? locationURI, string locationType)
+        {
+            locationName = locationName?.Trim();
+            locationURI = locationURI?.Trim();
+            locationType = locationType?.Trim();
+
+            var location = new Location
+            {
+                ImageId = imageId,
+                LocationName = locationName,
+                LocationUri = locationURI,
+                LocationType = locationType,
+            };
+
+            dbFiles.Locations.Add(location);
+            await dbFiles.SaveChangesAsync();
+        }
+
+        public async Task AddPerson(int imageId, string? personName, string? personIdentifier)
+        {
+            personName = personName?.Trim();
+            personIdentifier = personIdentifier?.Trim();
+
+            var person = new Person
+            {
+                ImageId = imageId,
+                PersonName = personName,
+                PersonIdentifier = personIdentifier,
+            };
+
+            dbFiles.Persons.Add(person);
             await dbFiles.SaveChangesAsync();
         }
     }

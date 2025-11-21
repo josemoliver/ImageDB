@@ -5,11 +5,13 @@ using System.Collections.Generic;
 
 namespace ImageDB.Models;
 
-public partial class RelationLocation
+public partial class Person
 {
-    public int LocationRelationId { get; set; }
+    public int PersonId { get; set; }
 
     public int? ImageId { get; set; }
 
-    public int? LocationId { get; set; }
+    public string PersonName { get; set; }
+
+    public string PersonIdentifier { get; set; }
 }

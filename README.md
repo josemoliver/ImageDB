@@ -1,5 +1,5 @@
 # Image Metadata Analysis - Database Loader Tool
-This command-line tool scans a specified folder (or all libraries if no folder is provided) for image files, and using the powerful ExifTool utility- extracts the metadata, and updates a SQLite database accordingly. It does not alter the file metadata. The tool and database is designed for users with knowledge of SQL and photo metadata, allowing them to analyze the metadata of their photo collections.
+This command-line tool scans a specified folder (or all libraries if no folder is provided) for image files, and using the powerful ExifTool utility- extracts the metadata, and updates a SQLite database accordingly. It does not alter the file metadata. The tool and database is designed for users with knowledge of SQL and photo metadata, allowing them to analyze the metadata of their photo collections. More information can be obtain in the [ImageDB Project Wiki] (https://github.com/josemoliver/ImageDB/wiki).
 
 
 ## Installation
@@ -87,13 +87,13 @@ Using a SQLlite database management tool, open the database file so you can anal
 
 
 ## Metadata Table Fields:
-Although all the metadata tags retrieved using Exiftool are loaded into `Metadata` field and accessible for queries and views, some other table values in the database are derived based on those fields for easier presentation. If various fields correspond to the same property the first non-empty/null value is used. For example, in the case of Image.Title the order of precedence is "XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle". Other values are derived from merging similar values such as PeopleTag.PersonName or derived from a combination of fields as in the case of Image.Device.
+Although all the metadata tags retrieved using Exiftool are loaded into the `Image.Metadata` field in JSON format and accessible for queries and views, some other table values in the database are derived based on those fields for easier presentation. Unless specified, if various fields correspond to the same property the first non-empty/null value is used. For example, in the case of `Image.Title` the order of precedence is "XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle". Other values are derived from merging similar values such as PeopleTag.PersonName or derived from a combination of fields as in the case of Image.Device.
 
 | Table.Column            | Source(s)                            |
 | :------------     | :--------------------------------------------------------- | 
 | `Image.Title`     | XMP-dc:Title,IPTC:ObjectName, or IFD0:XPTitle  |
 | `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription,IFD0:XPComment,IFD0:XPSubject,IFD0:XPComment or IPTC:Headline |
-| `Image.Album`     | Derived from the PhotoLibrary subfolder |
+| `Image.Album`     | Derived from the PhotoLibrary subfolder(s). Nested subfolder names are concatenated with a dash (-).  |
 | `Image.Rating`     | XMP-xmp:Rating, or IFD0:Rating |
 | `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
 | `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |
@@ -107,7 +107,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into `Metadat
 | `Image.Country`     | XMP-iptcExt:LocationCreatedCountryName, XMP-photoshop:Country or IPTC:Country-PrimaryLocationName |
 | `Image.CountryCode`     | XMP-iptcExt:LocationCreatedCountryCode, XMP-iptcCore:CountryCode or IPTC:Country-PrimaryLocationCode  |
 | `Image.Creator`     | XMP-dc:Creator, IPTC:By-line, IFD0:Artist, XMP-tiff:Artist, or IFD0:XPAuthor |
-| `Image.Copyright`     | XMP-dc:Rights,IPTC:CopyrightNotice, or IFD0:Copyright  |
+| `Image.Copyright`     | XMP-dc:Rights, IPTC:CopyrightNotice, or IFD0:Copyright  |
 | `PeopleTag.PersonName`     | Merged names from XMP-MP:RegionPersonDisplayName, XMP-mwg-rs:RegionName, and XMP-iptcExt:PersonInImage  |
 | `Tag.TagName`     | Merged values from IPTC:Keywords, XMP-dc:Subject, and IFD0:XPKeywords  |
 | `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
@@ -130,7 +130,9 @@ The views are meant to assist in your metadata inspection and analysis. For exam
 ## Example usage:
 - Duplicate file detection, either by filename or hash value.
 - Identify files with missing metadata, such as dates, captions, geotags, etc.
-- WindowsXP Legacy Image Fields - Prior to better image photo metadata standards, Microsoft introduced as as part of the Windows XP operating system (released in 2001) to store descriptive metadata about images (and some other file types) in a way that supported Unicode text. The WindowsXP XPTitle, XPSubject, XPComment, XPAuthor and XPKeywords are stored in the EXIF tag space, but are not part of the official EXIF standard. They were intended to enable users to tag and search images using Windows Explorer, and are supported still by some applications. Use the vLegacyWindowsXP view to identify files containing data in these fields. Usefull if migrating your photo collection from apps such as Windows Photo Gallery - Refer to blog post: https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/
-- IPTC IIM – Developed in the 1990s, the IPTC IIM metadata standard was widely used in journalism and media. Although it has largely been replaced by newer formats like XMP, it remains supported by many tools for backward compatibility. To view IPTC IIM metadata in your images, use the vLegacy_IPTC_IMM view. 
-- MWG Region mistmatch - Cropping or resizing images can lead to inconsistencies in MWG Region metadata. Refer to page 51 of the MWG Guidance document for details. The vRegionMismatch view checks whether the AppliedToDimensions values in MWG Regions match the actual image dimensions and flags any discrepancies.
+- WindowsXP Legacy Image Fields - Prior to better image photo metadata standards, Microsoft introduced as as part of the Windows XP operating system (released in 2001) to store descriptive metadata about images (and some other file types) in a way that supported Unicode text. The WindowsXP XPTitle, XPSubject, XPComment, XPAuthor and XPKeywords are stored in the EXIF tag space, but are not part of the official EXIF standard. They were intended to enable users to tag and search images using Windows Explorer, and are still supported by some applications. Use the `vLegacyWindowsXP` view to identify files containing data in these fields. This view is particulary useful if migrating your photo collection from apps such as Windows Photo Gallery - Refer to blog post: https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/
+- IPTC IIM – Developed in the 1990s, the IPTC IIM metadata standard was widely used in journalism and media. Although it has largely been replaced by newer formats like XMP, it remains supported by many tools for backward compatibility. To view IPTC IIM metadata in your images, use the `vLegacy_IPTC_IMM` view. 
+- MWG Region mistmatch - Cropping or resizing images can lead to inconsistencies in MWG Region metadata. Refer to page 51 of the MWG Guidance document for details. The `vRegionMismatch` view checks whether the AppliedToDimensions values in MWG Regions match the actual image dimensions and flags any discrepancies.
 - Reports for miscellaneous photo metadata such as Weather Tags (vWeatherTags) - https://jmoliver.wordpress.com/2018/07/07/capturing-the-moment-and-the-ambient-weather-information-in-photos/ 
+
+For additional usage scenarios read: [Using ImageDB to identify common photo metadata issues](https://github.com/josemoliver/ImageDB/wiki/Using-ImageDB-to-identify-common-photo-metadata-issues)

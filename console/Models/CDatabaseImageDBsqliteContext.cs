@@ -32,11 +32,11 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 
     public virtual DbSet<PeopleTag> PeopleTags { get; set; }
 
+    public virtual DbSet<Person> Persons { get; set; }
+
     public virtual DbSet<PhotoLibrary> PhotoLibraries { get; set; }
 
     public virtual DbSet<Region> Regions { get; set; }
-
-    public virtual DbSet<RelationLocation> RelationLocations { get; set; }
 
     public virtual DbSet<RelationPeopleTag> RelationPeopleTags { get; set; }
 
@@ -94,6 +94,8 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
         modelBuilder.Entity<Location>(entity =>
         {
             entity.ToTable("Location");
+
+            entity.Property(e => e.LocationUri).HasColumnName("LocationURI");
         });
 
         modelBuilder.Entity<Log>(entity =>
@@ -123,6 +125,11 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.Property(e => e.Fsid).HasColumnName("FSId");
         });
 
+        modelBuilder.Entity<Person>(entity =>
+        {
+            entity.ToTable("Person");
+        });
+
         modelBuilder.Entity<PhotoLibrary>(entity =>
         {
             entity.ToTable("PhotoLibrary");
@@ -139,13 +146,6 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.Property(e => e.RegionAreaW).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaX).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaY).HasColumnType("NUMERIC");
-        });
-
-        modelBuilder.Entity<RelationLocation>(entity =>
-        {
-            entity.HasKey(e => e.LocationRelationId);
-
-            entity.ToTable("relationLocation");
         });
 
         modelBuilder.Entity<RelationPeopleTag>(entity =>

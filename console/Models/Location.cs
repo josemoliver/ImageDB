@@ -9,11 +9,11 @@ public partial class Location
 {
     public int LocationId { get; set; }
 
-    public string LocationIdentifier { get; set; }
+    public int? ImageId { get; set; }
 
     public string LocationName { get; set; }
 
-    public string Latitude { get; set; }
+    public string LocationUri { get; set; }
 
-    public string Longitude { get; set; }
+    public string LocationType { get; set; }
 }

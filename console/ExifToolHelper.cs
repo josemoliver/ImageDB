@@ -110,9 +110,10 @@ namespace ImageDB
 
                     if (mode.ToLower()=="mwg")
                     {
-                        cmd.AppendLine($"-struct");         // Structure output
-                        cmd.AppendLine($"-XMP:RegionInfo"); // MWG RegionInfo
-                        cmd.AppendLine($"-XMP:Collections");// MWG Collections
+                        cmd.AppendLine($"-struct");                     // Structure output
+                        cmd.AppendLine($"-XMP:RegionInfo");             // MWG RegionInfo
+                        cmd.AppendLine($"-XMP:Collections");            // MWG Collections
+                        cmd.AppendLine($"-XMP:PersonInImageWDetails");  // MWG Collections
                     }
                     else
                     {

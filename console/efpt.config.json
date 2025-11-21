@@ -4,14 +4,18 @@
    "ContextNamespace": null,
    "FilterSchemas": false,
    "IncludeConnectionString": true,
+   "IrregularWords": null,
+   "MinimumProductVersion": "2.6.1224",
    "ModelNamespace": null,
    "OutputContextPath": null,
    "OutputPath": "Models",
+   "PluralRules": null,
    "PreserveCasingWithRegex": true,
    "ProjectRootNamespace": "ImageDB",
    "Schemas": null,
    "SelectedHandlebarsLanguage": 2,
    "SelectedToBeGenerated": 0,
+   "SingularRules": null,
    "T4TemplatePath": null,
    "Tables": [
       {
@@ -40,6 +44,10 @@
       },
       {
          "Name": "PeopleTag",
+         "ObjectType": 0
+      },
+      {
+         "Name": "Person",
          "ObjectType": 0
       },
       {

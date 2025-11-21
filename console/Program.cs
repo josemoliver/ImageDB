@@ -491,17 +491,19 @@ void ScanFiles(string photoFolder, int photoLibraryId)
             string deleteImageQuery         = @"DELETE FROM Image WHERE PhotoLibraryId NOT IN (SELECT PhotoLibraryId FROM PhotoLibrary);"; // Delete orphaned images if PhotoLibrary does not exist
             string deleteTagQuery           = @"DELETE FROM relationTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationTag.ImageId);"; // Delete orphaned tags
             string deletePeopleTagQuery     = @"DELETE FROM relationPeopleTag WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationPeopleTag.ImageId);"; // Delete orphaned people tags
-            string deleteLocationTagQuery   = @"DELETE FROM relationLocation WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = relationLocation.ImageId);"; // Delete orphaned location tags
             string deleteRegion             = @"DELETE FROM Region WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Region.ImageId);"; // Delete orphaned regions
             string deleteCollectionQuery    = @"DELETE FROM Collection WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Collection.ImageId);"; // Delete orphaned images
-            
+            string deleteLocationQuery      = @"DELETE FROM Location WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Location.ImageId);"; // Delete orphaned locations
+            string deletePersonQuery        = @"DELETE FROM Person WHERE NOT EXISTS (SELECT 1 FROM Image WHERE Image.ImageId = Person.ImageId);"; // Delete orphaned persons
+
             // Execute the raw SQL command
             dbFiles.Database.ExecuteSqlRaw(deleteImageQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deletePeopleTagQuery);
-            dbFiles.Database.ExecuteSqlRaw(deleteLocationTagQuery);
             dbFiles.Database.ExecuteSqlRaw(deleteRegion);
             dbFiles.Database.ExecuteSqlRaw(deleteCollectionQuery);
+            dbFiles.Database.ExecuteSqlRaw(deleteLocationQuery);
+            dbFiles.Database.ExecuteSqlRaw(deletePersonQuery);
 
             Console.WriteLine("[BATCH] - Completed job # " + batchID);
             Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
@@ -597,7 +599,9 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             }
 
             // Check if the file has regions
-            if (jsonMetadata.Contains("XMP-mwg-rs:Region") || (jsonMetadata.Contains("XMP-mwg-coll:Collection")))
+            if ((jsonMetadata.Contains("XMP-mwg-rs:Region") ||
+                (jsonMetadata.Contains("XMP-mwg-coll:Collection") ||
+                (jsonMetadata.Contains("XMP-iptcExt:PersonInImage")))))
             {
                 structJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "mwg");
             }
@@ -661,8 +665,10 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             throw new ArgumentException("No metadata found for the file.");
         }
 
-    // Check if the file has regions
-        if (jsonMetadata.Contains("XMP-mwg-rs:Region") || (jsonMetadata.Contains("XMP-mwg-coll:Collection")))
+        // Check if the file has regions
+        if ((jsonMetadata.Contains("XMP-mwg-rs:Region") ||
+            (jsonMetadata.Contains("XMP-mwg-coll:Collection") ||
+            (jsonMetadata.Contains("XMP-iptcExt:PersonInImage")))))
         {
              structJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "mwg");
         }
@@ -749,9 +755,10 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         decimal? longitude;
         decimal? altitude;
 
-        HashSet<string> peopleTag           = new HashSet<string>();
-        HashSet<string> descriptiveTag      = new HashSet<string>();
-        HashSet<string> locationIdentifier  = new HashSet<string>();
+        HashSet<string> peopleTag                   = new HashSet<string>();
+        HashSet<string> descriptiveTag              = new HashSet<string>();
+        HashSet<string> locationCreatedIdentifier   = new HashSet<string>();
+        HashSet<string> locationShownIdentifier     = new HashSet<string>();
 
     //Get metadata from db
     using var dbFiles = new CDatabaseImageDBsqliteContext();
@@ -979,7 +986,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
                 // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
-                string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedLocationName", "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
+                string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
                 string[] exiftoolCityTags           = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
                 string[] exiftoolStateProvinceTags  = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
                 string[] exiftoolCountryTags        = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
@@ -1007,7 +1014,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 // Microsoft People Tags - Ref: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-people-tagging
                 // IPTC Extension Person In Image - Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#person-shown-in-the-image
 
-                peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage" });
+                peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage", "XMP-iptcExt:PersonInImageName" });
 
                 var servicePeopleTags = new PeopleTagService(dbFiles);
 
@@ -1026,6 +1033,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             var mwgStruct = new StructService(dbFiles);
             await mwgStruct.DeleteRegions(imageID);
             await mwgStruct.DeleteCollections(imageID);
+            await mwgStruct.DeletePersons(imageID);
 
             if (structJsonMetadata != String.Empty)
             {
@@ -1036,6 +1044,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                     if (structMeta != null)
                     {
+                        // Add Regions
                         try
                         {
                             if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
@@ -1053,6 +1062,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                             LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
                         }
 
+                        // Add Collections
                         try
                         {
                             if (structMeta?.Collections?.Any() == true)
@@ -1067,8 +1077,34 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                         {
                             // Handle the exception - Log the error message
                             Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
-                            LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                            LogEntry(0, sourceFile, "[Unable to read MWG Collection] - " + ex.ToString());
                         }
+
+                        // Add Persons
+                        try
+                        {
+                            if (structMeta?.PersonInImageWDetails?.Any() == true)
+                            {
+                                foreach (var per in structMeta.PersonInImageWDetails)
+                                {
+                                    //If person name is not available, use empty string  
+                                    string personName = per.PersonName ?? String.Empty;
+
+                                    //Add each PersonId associated with the person
+                                    foreach (var perId in per.PersonId)
+                                    {
+                                        await mwgStruct.AddPerson(imageID, personName, perId);
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Handle the exception - Log the error message
+                            Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
+                            LogEntry(0, sourceFile, "[Unable to read MWG Collection] - " + ex.ToString());
+                        }
+
                     }
                 }
                 catch (Exception ex)
@@ -1076,7 +1112,6 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                     // Handle the exception - Log the error message
                     Console.WriteLine("[ERROR] - Failed to deserialize struct metadata: " + ex.Message);
                     LogEntry(0, sourceFile, "[Unable to read MWG Region/Collection] - " + ex.ToString());
-
                 }
             }
 
@@ -1103,15 +1138,22 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 // When a new location identifier is found, it will be added to the database with the location name of the image.
                 // The location name in table Location can be modified by the user.
 
-                locationIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
+                locationCreatedIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
+                locationShownIdentifier   = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationShownLocationId" });
 
-                var serviceLocations = new LocationIdService(dbFiles);
+                var serviceLocations = new StructService(dbFiles);
 
-                await serviceLocations.DeleteRelations(imageID); // Delete existing location identifiers
+                await serviceLocations.DeleteLocations(imageID); // Delete existing location identifiers
 
-                foreach (var locationURI in locationIdentifier)
+                // Add new location identifiers
+                foreach (var locationURI in locationCreatedIdentifier)
                 {
-                       await serviceLocations.AddLocationId(locationURI, location, imageID);
+                       await serviceLocations.AddLocation(imageID,location,locationURI,"created");
+                }
+
+                foreach (var locationURI in locationShownIdentifier)
+                {
+                       await serviceLocations.AddLocation(imageID, location, locationURI, "shown");
                 }
 
         }
@@ -1142,7 +1184,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 image.FileCreatedDate           = fileCreatedDate;
                 image.FileModifiedDate          = fileModifiedDate;
 
-                // Update the file path and other properties only when necessary. Not needed when perfoming a metadata reload.
+                // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
                 if (updatedSHA1 != String.Empty)
                 {
                     image.Sha1              = updatedSHA1;
@@ -1174,7 +1216,7 @@ static string NormalizeRatingNumber(string inputRatingValue)
 {
     // Ref https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
     // "The value -1.0 represents a “reject” rating. If a client is not capable of handling float values, it SHOULD round to the closest integer for display
-    // and MUST only change the value once the user has changed the rating in the UI.Also, clients MAY store integer numbers. If a value is out of the
+    // and MUST only change the value once the user has changed the rating in the UI. Also, clients MAY store integer numbers. If a value is out of the
     // recommended scope it SHOULD be rounded to closest value.In particular, values > “5.0” SHOULD set to “5.0” as well as all values < “-1.0” SHOULD be set to “-1.0”."
 
     if (string.IsNullOrWhiteSpace(inputRatingValue.Trim()))

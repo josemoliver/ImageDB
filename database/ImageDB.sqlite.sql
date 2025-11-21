@@ -1,5 +1,6 @@
 BEGIN TRANSACTION;
-CREATE TABLE IF NOT EXISTS "Batch" (
+DROP TABLE IF EXISTS "Batch";
+CREATE TABLE "Batch" (
 	"BatchID"	INTEGER,
 	"StartDateTime"	TEXT,
 	"EndDateTime"	TEXT,
@@ -14,14 +15,16 @@ CREATE TABLE IF NOT EXISTS "Batch" (
 	"Comment"	TEXT,
 	PRIMARY KEY("BatchID" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Collection" (
+DROP TABLE IF EXISTS "Collection";
+CREATE TABLE "Collection" (
 	"CollectionId"	INTEGER,
 	"ImageId"	INTEGER NOT NULL,
 	"CollectionName"	TEXT,
 	"CollectionURI"	TEXT,
 	PRIMARY KEY("CollectionId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Image" (
+DROP TABLE IF EXISTS "Image";
+CREATE TABLE "Image" (
 	"ImageId"	INTEGER,
 	"PhotoLibraryId"	INTEGER,
 	"Filepath"	TEXT UNIQUE,
@@ -56,15 +59,17 @@ CREATE TABLE IF NOT EXISTS "Image" (
 	"ModifiedBatchId"	INTEGER,
 	PRIMARY KEY("ImageId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Location" (
+DROP TABLE IF EXISTS "Location";
+CREATE TABLE "Location" (
 	"LocationId"	INTEGER,
-	"LocationIdentifier"	TEXT,
+	"ImageId"	INTEGER,
 	"LocationName"	TEXT,
-	"Latitude"	TEXT,
-	"Longitude"	TEXT,
+	"LocationURI"	TEXT,
+	"LocationType"	TEXT,
 	PRIMARY KEY("LocationId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Log" (
+DROP TABLE IF EXISTS "Log";
+CREATE TABLE "Log" (
 	"LogEntryId"	INTEGER,
 	"Datetime"	TEXT,
 	"BatchID"	INTEGER,
@@ -72,7 +77,8 @@ CREATE TABLE IF NOT EXISTS "Log" (
 	"LogEntry"	TEXT,
 	PRIMARY KEY("LogEntryId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "MetadataHistory" (
+DROP TABLE IF EXISTS "MetadataHistory";
+CREATE TABLE "MetadataHistory" (
 	"HistoryId"	INTEGER,
 	"ImageId"	INTEGER,
 	"Filepath"	TEXT,
@@ -84,18 +90,29 @@ CREATE TABLE IF NOT EXISTS "MetadataHistory" (
 	"StuctMetadata"	TEXT,
 	PRIMARY KEY("HistoryId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "PeopleTag" (
+DROP TABLE IF EXISTS "PeopleTag";
+CREATE TABLE "PeopleTag" (
 	"PeopleTagId"	INTEGER,
 	"PersonName"	TEXT UNIQUE,
 	"FSId"	TEXT,
 	PRIMARY KEY("PeopleTagId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "PhotoLibrary" (
+DROP TABLE IF EXISTS "Person";
+CREATE TABLE "Person" (
+	"PersonId"	INTEGER,
+	"ImageId"	INTEGER,
+	"PersonName"	TEXT,
+	"PersonIdentifier"	TEXT,
+	PRIMARY KEY("PersonId" AUTOINCREMENT)
+);
+DROP TABLE IF EXISTS "PhotoLibrary";
+CREATE TABLE "PhotoLibrary" (
 	"PhotoLibraryId"	INTEGER,
 	"Folder"	TEXT NOT NULL,
 	PRIMARY KEY("PhotoLibraryId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Region" (
+DROP TABLE IF EXISTS "Region";
+CREATE TABLE "Region" (
 	"RegionId"	INTEGER,
 	"ImageId"	INTEGER NOT NULL,
 	"RegionName"	TEXT,
@@ -108,37 +125,37 @@ CREATE TABLE IF NOT EXISTS "Region" (
 	"RegionAreaD"	NUMERIC,
 	PRIMARY KEY("RegionId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "Tag" (
+DROP TABLE IF EXISTS "Tag";
+CREATE TABLE "Tag" (
 	"TagId"	INTEGER,
 	"TagName"	TEXT UNIQUE,
 	"Source"	INTEGER,
 	PRIMARY KEY("TagId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "relationLocation" (
-	"LocationRelationId"	INTEGER,
-	"ImageId"	INTEGER,
-	"LocationId"	INTEGER,
-	PRIMARY KEY("LocationRelationId" AUTOINCREMENT)
-);
-CREATE TABLE IF NOT EXISTS "relationPeopleTag" (
+DROP TABLE IF EXISTS "relationPeopleTag";
+CREATE TABLE "relationPeopleTag" (
 	"PeopleRelationId"	INTEGER,
 	"ImageId"	INTEGER,
 	"PeopleTagId"	INTEGER,
 	PRIMARY KEY("PeopleRelationId" AUTOINCREMENT)
 );
-CREATE TABLE IF NOT EXISTS "relationTag" (
+DROP TABLE IF EXISTS "relationTag";
+CREATE TABLE "relationTag" (
 	"RelationTagId"	INTEGER,
 	"ImageId"	INTEGER,
 	"TagId"	INTEGER,
 	PRIMARY KEY("RelationTagId" AUTOINCREMENT)
 );
+DROP VIEW IF EXISTS "vAlbums";
 CREATE VIEW vAlbums AS
 WITH Converted AS (
   SELECT
+    PhotoLibraryId,
     Album,
+    Filesize,
     datetime(
       substr(DateTimeTaken, 1, 10) || ' ' ||
-      printf('%02d', 
+      printf('%02d',
         CASE 
           WHEN substr(DateTimeTaken, 12, 2) = '12' AND substr(DateTimeTaken, 21, 2) = 'AM' THEN 0
           WHEN substr(DateTimeTaken, 21, 2) = 'PM' AND substr(DateTimeTaken, 12, 2) != '12' THEN CAST(substr(DateTimeTaken, 12, 2) AS INTEGER) + 12
@@ -149,18 +166,22 @@ WITH Converted AS (
   FROM Image
 )
 SELECT
+  PhotoLibraryId,
   Album,
   MIN(ConvertedDateTime) AS MinDateTimeTaken,
   MAX(ConvertedDateTime) AS MaxDateTimeTaken,
-  -- Days difference: Max - Min
   CAST(
     (julianday(MAX(ConvertedDateTime)) - julianday(MIN(ConvertedDateTime)))
     AS INTEGER
-  ) AS Days
+  ) AS Days,
+  SUM(Filesize) AS TotalFilesize,
+  COUNT(*) AS ImageCount
 FROM Converted
-GROUP BY Album;
+GROUP BY PhotoLibraryId, Album;
+DROP VIEW IF EXISTS "vCollections";
 CREATE VIEW vCollections AS
 SELECT CollectionName, CollectionURI, Count (CollectionId) AS GroupingCount FROM Collection GROUP BY CollectionName, CollectionURI ORDER BY CollectionName, CollectionURI;
+DROP VIEW IF EXISTS "vCreator";
 CREATE VIEW vCreator AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Artist') AS Artist,
@@ -168,8 +189,10 @@ json_extract(Metadata, '$.IPTC:By-line') AS ByLine,
 json_extract(Metadata, '$.XMP-dc:Creator') AS Creator, 
 json_extract(Metadata, '$.XMP-tiff:Artist') AS TiffArtist
 FROM Image;
+DROP VIEW IF EXISTS "vDates";
 CREATE VIEW vDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
+DROP VIEW IF EXISTS "vDescriptions";
 CREATE VIEW vDescriptions AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.XMP-dc:Description') AS Description,
@@ -180,11 +203,13 @@ json_extract(Metadata, '$.XMP-tiff:ImageDescription') AS TiffImageDescription,
 json_extract(Metadata, '$.IFD0:XPComment') AS XPComment,
 json_extract(Metadata, '$.IPTC:Headline') AS Headline
 FROM Image;
+DROP VIEW IF EXISTS "vDevices";
 CREATE VIEW vDevices AS
 SELECT ImageId,Filepath,Device, 
 json_extract(Metadata, '$.IFD0:Make') AS Make,
 json_extract(Metadata, '$.IFD0:Model') AS Model 
 FROM Image;
+DROP VIEW IF EXISTS "vDevicesCount";
 CREATE VIEW vDevicesCount AS
 SELECT 
     COALESCE(NULLIF(Device, ''), '(unknown)') AS Device,
@@ -196,17 +221,20 @@ SELECT
 FROM vDevices
 GROUP BY COALESCE(NULLIF(Device, ''), '(unknown)')
 ORDER BY DeviceCount DESC;
+DROP VIEW IF EXISTS "vDuplicateFilenames";
 CREATE VIEW vDuplicateFilenames AS
 SELECT LOWER(Filename) AS Filename, COUNT(*) 
 FROM Image
 GROUP BY LOWER(Filename)
 HAVING COUNT(*) > 1;
+DROP VIEW IF EXISTS "vExifTimeZone";
 CREATE VIEW vExifTimeZone AS
 SELECT ImageId,Filepath, DateTimeTakenTimeZone, 
 json_extract(Metadata, '$.ExifIFD:OffsetTimeOriginal') AS ExifTimeZone,
 Metadata
 FROM Image
 ORDER BY ExifTimeZone ASC;
+DROP VIEW IF EXISTS "vFileDimensions";
 CREATE VIEW vFileDimensions AS
 SELECT ImageId,Filepath,Filename,
 json_extract(Metadata, '$.File:ImageWidth') AS FileWidth,
@@ -215,6 +243,7 @@ json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsW') AS RWidth,
 json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsH') AS RHeight,
 Metadata
 FROM Image;
+DROP VIEW IF EXISTS "vGeneralMetadata";
 CREATE VIEW vGeneralMetadata AS
 SELECT 
     Image.Filepath,
@@ -243,12 +272,32 @@ LEFT JOIN
     vPeopleTagsPerImage ON Image.ImageId = vPeopleTagsPerImage.ImageId
 GROUP BY 
     Image.ImageId;
+DROP VIEW IF EXISTS "vGeotags";
 CREATE VIEW vGeotags AS
 SELECT Location,City,StateProvince,Country,CountryCode, AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude, Count(ImageId) AS FileCount
 FROM Image
 GROUP BY Location,StateProvince,Country,City;
+DROP VIEW IF EXISTS "vIPTCDigest";
 CREATE VIEW vIPTCDigest AS
 SELECT Filepath, json_extract(Metadata, '$.XMP-photoshop:LegacyIPTCDigest') AS LegacyIPTCDigest,json_extract(Metadata, '$.File:CurrentIPTCDigest') AS CurrentIPTCDigest, Metadata FROM Image WHERE LegacyIPTCDigest IS NOT NULL;
+DROP VIEW IF EXISTS "vIPTCRightsContacts";
+CREATE VIEW vIPTCRightsContacts AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.IPTC:By-Line') AS IPTC_ByLine,
+json_extract(Metadata, '$.IPTC:By-lineTitle') AS IPTC_ByLineTitle,
+json_extract(Metadata, '$.IPTC:CopyrightNotice') AS IPTC_CopyrightNotice,
+json_extract(Metadata, '$.XMP-dc:Creator') AS Creator,
+json_extract(Metadata, '$.XMP-dc:Rights') AS Rights,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorAddress') AS CreatorAddress,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorCity') AS CreatorCity,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorPostalCode') AS CreatorPostalCode,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorRegion') AS CreatorRegion,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorCountry') AS CreatorCountry,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorWorkEmail') AS CreatorWorkEmail,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorWorkTelephone') AS CreatorWorkTelephone,
+json_extract(Metadata, '$.XMP-iptcCore:CreatorWorkURL') AS CreatorWorkURL
+FROM Image;
+DROP VIEW IF EXISTS "vImageCameraSettings";
 CREATE VIEW vImageCameraSettings AS
 SELECT ImageId,Filepath,Filename,
 json_extract(Metadata, '$.Composite:Aperture') AS Aperture,
@@ -261,6 +310,7 @@ json_extract(Metadata, '$.Composite:FocalLength35efl') AS FocalLength35efl,
 json_extract(Metadata, '$.Composite:HyperfocalDistance') AS HyperfocalDistance,
 json_extract(Metadata, '$.Composite:LensID') AS LensID
 FROM Image;
+DROP VIEW IF EXISTS "vLegacyWindowsXP";
 CREATE VIEW vLegacyWindowsXP AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:XPTitle') AS XPTitle,
@@ -270,6 +320,7 @@ json_extract(Metadata, '$.IFD0:XPAuthor') AS XPAuthor,
 json_extract(Metadata, '$.IFD0:XPKeywords') AS XPKeywords,
 Metadata
 FROM Image;
+DROP VIEW IF EXISTS "vLegacy_IPTC_IMM";
 CREATE VIEW vLegacy_IPTC_IMM AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName,
@@ -292,6 +343,12 @@ json_extract(Metadata, '$.IPTC:SpecialInstructions') AS SpecialInstructions,
 json_extract(Metadata, '$.IPTC:Category') AS Category,
 Metadata
 FROM Image;
+DROP VIEW IF EXISTS "vLensInfo";
+CREATE VIEW vLensInfo AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.Composite:LensID') AS LensID
+FROM Image;
+DROP VIEW IF EXISTS "vMetadataKeys";
 CREATE VIEW vMetadataKeys AS
 WITH json_keys AS (
     SELECT 
@@ -311,6 +368,7 @@ GROUP BY
     json_key
 ORDER BY 
     key_count DESC;
+DROP VIEW IF EXISTS "vMetadataModificationComparison";
 CREATE VIEW vMetadataModificationComparison AS
 WITH PrevMetadata AS (
     SELECT
@@ -345,10 +403,12 @@ WHERE
     AND i.RecordModified IS NOT NULL
 ORDER BY
     i.RecordModified DESC;
+DROP VIEW IF EXISTS "vMissingGeotags";
 CREATE VIEW vMissingGeotags AS
 SELECT Filepath, Latitude,Longitude Location,StateProvince,Country,City
 FROM Image
 WHERE length(Location)=0 AND length(StateProvince)=0 AND length(Country)=0 AND length(City)=0;
+DROP VIEW IF EXISTS "vMonthlyPhotosTaken";
 CREATE VIEW vMonthlyPhotosTaken AS
 SELECT
     strftime('%Y', datetime(
@@ -375,6 +435,7 @@ SELECT
 FROM Image
 GROUP BY Year, Month
 ORDER BY Year, Month;
+DROP VIEW IF EXISTS "vPeopleTagCount";
 CREATE VIEW vPeopleTagCount AS
 SELECT 
     PeopleTag.PeopleTagID,
@@ -395,6 +456,7 @@ GROUP BY
     PeopleTag.PersonName
 ORDER BY 
     PeopleTagCount DESC;
+DROP VIEW IF EXISTS "vPeopleTagRegionCountDiff";
 CREATE VIEW vPeopleTagRegionCountDiff AS
 SELECT i.ImageId,i.Filepath,i.Filename, i.StuctMetadata, peopleTagCount, regionCount
 FROM Image i
@@ -410,6 +472,7 @@ LEFT JOIN (
 ) r ON i.ImageId = r.ImageId
 WHERE IFNULL(rpt.peopleTagCount, 0) != IFNULL(r.regionCount, 0)
 ORDER BY i.ImageId;
+DROP VIEW IF EXISTS "vPeopleTagsPerImage";
 CREATE VIEW vPeopleTagsPerImage AS
 SELECT 
 	Image.ImageId,
@@ -423,8 +486,10 @@ LEFT JOIN
     PeopleTag ON relationPeopleTag.PeopleTagId = PeopleTag.PeopleTagId
 GROUP BY 
     Image.ImageId;
+DROP VIEW IF EXISTS "vPhotoDates";
 CREATE VIEW vPhotoDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
+DROP VIEW IF EXISTS "vPhotoLibraries";
 CREATE VIEW vPhotoLibraries AS
 SELECT 
     p.PhotoLibraryId,
@@ -451,17 +516,32 @@ GROUP BY
     p.PhotoLibraryId
 ORDER BY 
     p.PhotoLibraryId;
+DROP VIEW IF EXISTS "vRatingCounts";
 CREATE VIEW vRatingCounts AS
-select Rating, Count(ImageId) As ImageCount from Image
-GROUP BY Rating;
+SELECT 
+    CASE 
+        WHEN TRIM(Rating) = '' THEN '(not specified)'
+        ELSE Rating
+    END AS Rating,
+    COUNT(ImageId) AS ImageCount
+FROM 
+    Image
+GROUP BY 
+    CASE 
+        WHEN TRIM(Rating) = '' THEN '(not specified)'
+        ELSE Rating
+    END;
+DROP VIEW IF EXISTS "vRecentlyModified";
 CREATE VIEW vRecentlyModified AS
 SELECT Filepath,FileModifiedDate, Metadata
 FROM Image
 ORDER BY FileModifiedDate DESC;
+DROP VIEW IF EXISTS "vRegionMismatch";
 CREATE VIEW vRegionMismatch AS
 SELECT *
 FROM vFileDimensions
 WHERE (FileWidth<>RWidth OR FileHeight<>RHeight) AND (FileWidth<>RHeight OR FileHeight<>RWidth);
+DROP VIEW IF EXISTS "vRights";
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.IFD0:Copyright') AS Copyright,
@@ -469,6 +549,7 @@ json_extract(Metadata, '$.IPTC:CopyrightNotice') AS CopyrightNotice,
 json_extract(Metadata, '$.XMP-dc:Rights') AS Rights,
 json_extract(Metadata, '$.XMP-tiff:Copyright') AS TiffCopyright
 FROM Image;
+DROP VIEW IF EXISTS "vSaveMetadataDotOrg";
 CREATE VIEW vSaveMetadataDotOrg AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.XMP-dc:Title') AS Title,
@@ -482,6 +563,7 @@ json_extract(Metadata, '$.XMP-iptcExt:LocationShownCountryName') AS CountryName,
 json_extract(Metadata, '$.XMP-iptcExt:LocationShownLocationId') AS LocationId,
 Metadata
 FROM Image;
+DROP VIEW IF EXISTS "vTagCount";
 CREATE VIEW vTagCount
 AS 
 SELECT Tag.TagID,Tag.TagName, IFNULL(COUNT(relationTag.TagId),0) AS 'TagCount' 
@@ -489,6 +571,7 @@ FROM Tag
 LEFT JOIN relationTag on relationTag.TagId = Tag.TagId
 GROUP BY Tag.TagName
 ORDER BY TagCount DESC;
+DROP VIEW IF EXISTS "vTagsPerImage";
 CREATE VIEW vTagsPerImage AS
 SELECT 
 	Image.ImageId,
@@ -502,18 +585,21 @@ LEFT JOIN
     Tag ON relationTag.TagId = Tag.TagId
 GROUP BY 
     Image.ImageId;
+DROP VIEW IF EXISTS "vTagsSansPeople";
 CREATE VIEW vTagsSansPeople AS
 SELECT TagName
 FROM Tag
 WHERE TagName NOT IN (
     SELECT PersonName FROM PeopleTag
 );
+DROP VIEW IF EXISTS "vTitles";
 CREATE VIEW vTitles AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.XMP-dc:Title') AS Title,
 json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName, 
 json_extract(Metadata, '$.IFD0:XPTitle') AS XPTitle
 FROM Image;
+DROP VIEW IF EXISTS "vWeatherTags";
 CREATE VIEW vWeatherTags AS
 SELECT ImageId,Filepath, 
 json_extract(Metadata, '$.ExifIFD:AmbientTemperature') AS AmbientTemperature,
@@ -521,13 +607,16 @@ json_extract(Metadata, '$.ExifIFD:Humidity') AS Humidity,
 json_extract(Metadata, '$.ExifIFD:Pressure') AS Pressure,
 Metadata
 FROM Image;
-CREATE INDEX IF NOT EXISTS "idx_image_filepath" ON "Image" (
+DROP INDEX IF EXISTS "idx_image_filepath";
+CREATE INDEX "idx_image_filepath" ON "Image" (
 	"Filepath"
 );
-CREATE INDEX IF NOT EXISTS "idx_image_record_modified" ON "Image" (
+DROP INDEX IF EXISTS "idx_image_record_modified";
+CREATE INDEX "idx_image_record_modified" ON "Image" (
 	"RecordModified"
 );
-CREATE INDEX IF NOT EXISTS "idx_metadata_history_image_id" ON "MetadataHistory" (
+DROP INDEX IF EXISTS "idx_metadata_history_image_id";
+CREATE INDEX "idx_metadata_history_image_id" ON "MetadataHistory" (
 	"ImageId"
 );
 COMMIT;
