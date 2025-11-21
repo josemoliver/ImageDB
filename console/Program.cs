@@ -1145,6 +1145,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 await serviceLocations.DeleteLocations(imageID); // Delete existing location identifiers
 
+                // Add new location identifiers
                 foreach (var locationURI in locationCreatedIdentifier)
                 {
                        await serviceLocations.AddLocation(imageID,location,locationURI,"created");
