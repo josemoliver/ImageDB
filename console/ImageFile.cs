@@ -45,7 +45,7 @@ namespace ImageDB
         /// <summary>
         /// Gets or sets the file size in bytes.
         /// </summary>
-        public string FileSize { get; set; }
+        public long FileSize { get; set; }
 
         /// <summary>
         /// Gets or sets the file creation date as a string. (yyyy-MM-dd hh:mm:ss tt).
@@ -61,7 +61,7 @@ namespace ImageDB
         /// <param name="fileName">File name.</param>
         /// <param name="fileSize">File size in bytes.</param>
         /// <param name="fileCreatedDate">Creation timestamp as a string (yyyy-MM-dd hh:mm:ss tt).</param>
-        public ImageFile(string filePath, string fileModifiedDate, string fileExtension, string fileName, string fileSize, string fileCreatedDate)
+        public ImageFile(string filePath, string fileModifiedDate, string fileExtension, string fileName, long fileSize, string fileCreatedDate)
         {
             FilePath = filePath;
             FileModifiedDate = fileModifiedDate;
