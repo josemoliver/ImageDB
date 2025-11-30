@@ -1,39 +1,41 @@
 ﻿// See https://aka.ms/new-console-template for more information
+using ImageDB;
 using ImageDB.Models;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Sqlite;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System;
-using System.Linq;
-using System.IO;
-using System.ComponentModel.Design;
-using System.Security.Cryptography;
-using System.Diagnostics;
-using System.Text;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using static System.Net.Mime.MediaTypeNames;
-using System.Xml.Linq;
-using System.Globalization;
-using System.Diagnostics.Metrics;
-using System.Data.Common;
-using System.Runtime.CompilerServices;
-using Microsoft.Data.Sqlite;
-using System.Text.Encodings.Web;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.CommandLine.NamingConventionBinder;
-using Microsoft.Extensions.Logging.Abstractions;
-using ImageDB;
+using System.ComponentModel.Design;
+using System.Data.Common;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using System.Globalization;
+using System.IO;
+using System.IO.Enumeration;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
+using System.Xml.Linq;
+using static ImageDB.MetadataStuct;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 using static System.Formats.Asn1.AsnWriter;
-using System.Threading.Channels;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
-using System.IO.Enumeration;
+using static System.Net.Mime.MediaTypeNames;
+using static System.Net.WebRequestMethods;
 
 // ImageDB
 // Source Repo & Documentation: https://github.com/josemoliver/ImageDB
@@ -831,13 +833,23 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 //Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 36
                 // Also reading legacy Windows XP Exif Comment and Subject tags. These tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-                description = GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription","XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPSubject", "IFD0:XPComment", "IPTC:Headline" });
+                description = GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription","XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPSubject", "IFD0:XPComment", "IPTC:Headline", "XMP-acdsee:Caption" });
 
             // III. Image.Rating 
 
-                //Rating - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
-                rating = GetExiftoolValue(doc, new string[] { "XMP-xmp:Rating", "IFD0:Rating" });
-                rating = NormalizeRatingNumber(rating);
+            //Rating - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
+            //The rating property allows the user to assign a fixed value (often displayed as "stars") to an image. Usually, 1 - 5 star ratings are used. In addition, some tools support negative rating values(such as - 1)
+            //that allows for marking "rejects". If ratings are not found in the principal XMP or EXIF values, this code also checks
+            //for RatingPercent in EXIF or Microsoft specific XMP tags.
+
+
+                rating = NormalizeRatingNumber(GetExiftoolValue(doc, new string[] { "XMP-xmp:Rating", "IFD0:Rating" }));
+
+                if (rating == String.Empty)
+                {
+                    rating = NormalizeRatingPercent(GetExiftoolValue(doc, new string[] { "IFD0:RatingPercent", "XMP-microsoft:RatingPercent" }));
+                }               
+
 
             // IV. Image.DateTimeTaken 
 
@@ -1212,6 +1224,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         
 }
 
+// Normalize rating number to integer between -1 and 5
 static string NormalizeRatingNumber(string inputRatingValue)
 {
     // Ref https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
@@ -1246,6 +1259,32 @@ static string NormalizeRatingNumber(string inputRatingValue)
     // If the input is not a valid number, return empty string.
     return String.Empty;
 }
+
+// Normalize rating percentage to 0-5 scale
+static string NormalizeRatingPercent(string inputRatingValue)
+{
+    if (!int.TryParse(inputRatingValue, out int number))
+        return String.Empty; // or handle invalid input differently if needed
+
+    if (number < 0)
+        return "-1";
+    if (number == 0)
+        return "0";
+    if (number >= 1 && number <= 24)
+        return "1";
+    if (number >= 25 && number <= 49)
+        return "2";
+    if (number >= 50 && number <= 74)
+        return "3";
+    if (number >= 75 && number <= 98)
+        return "4";
+    if (number >= 99)
+        return "5";
+
+    // default fallback (should never hit)
+    return String.Empty;
+}
+
 
 // Returns a HashSet of values for the specified ExifTool tags
 static HashSet<string> GetExiftoolListValues(JsonDocument doc, string[] exiftoolTags)
