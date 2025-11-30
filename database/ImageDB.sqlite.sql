@@ -32,7 +32,7 @@ CREATE TABLE "Image" (
 	"SHA1"	TEXT,
 	"Format"	TEXT,
 	"Filename"	TEXT,
-	"Filesize"	TEXT,
+	"Filesize"	INTEGER,
 	"FileCreatedDate"	TEXT,
 	"FileModifiedDate"	TEXT,
 	"Title"	TEXT,

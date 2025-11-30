@@ -21,7 +21,7 @@ public partial class Image
 
     public string Filename { get; set; }
 
-    public string Filesize { get; set; }
+    public long? Filesize { get; set; }
 
     public string FileCreatedDate { get; set; }
 

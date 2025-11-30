@@ -266,7 +266,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 continue; // Skip this file
             }
                        
-            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString(),file.Length.ToString(),file.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt")));         
+            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString(),file.Length,file.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt")));         
         }
 
         // Start Batch entry get batch id
@@ -615,7 +615,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt");
 
             // Update the fields with new values
-            image.Filesize          = fileSize.ToString();
+            image.Filesize          = fileSize;
             image.FileCreatedDate   = fileDateCreated;
             image.FileModifiedDate  = fileDateModified;
             image.Metadata          = jsonMetadata;
@@ -642,7 +642,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
     UpdateImageRecord(imageId, updatedSHA1, batchID);
 }
 
-async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, string fileSize, string SHA1)
+async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1)
 {
     int imageId                 = 0;
     string jsonMetadata         = String.Empty;
@@ -694,7 +694,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 
                 Filename = fileName,
                 Format = fileExtension,
-                Filesize = fileSize.ToString(),
+                Filesize = fileSize,
 
                 Metadata = jsonMetadata,
                 StuctMetadata = structJsonMetadata,
