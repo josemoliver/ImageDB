@@ -201,7 +201,8 @@ json_extract(Metadata, '$.IFD0:ImageDescription') AS ImageDescription,
 json_extract(Metadata, '$.ExifIFD:UserComment') AS UserComment, 
 json_extract(Metadata, '$.XMP-tiff:ImageDescription') AS TiffImageDescription,
 json_extract(Metadata, '$.IFD0:XPComment') AS XPComment,
-json_extract(Metadata, '$.IPTC:Headline') AS Headline
+json_extract(Metadata, '$.IPTC:Headline') AS Headline,
+json_extract(Metadata, '$.XMP-acdsee:Caption') AS ACDSeeCaption
 FROM Image;
 DROP VIEW IF EXISTS "vDevices";
 CREATE VIEW vDevices AS
@@ -309,6 +310,12 @@ json_extract(Metadata, '$.ExifIFD:ISO') AS ISO,
 json_extract(Metadata, '$.Composite:FocalLength35efl') AS FocalLength35efl,
 json_extract(Metadata, '$.Composite:HyperfocalDistance') AS HyperfocalDistance,
 json_extract(Metadata, '$.Composite:LensID') AS LensID
+FROM Image;
+DROP VIEW IF EXISTS "vLabels";
+CREATE VIEW vLabels AS
+SELECT ImageId,Filepath,
+json_extract(Metadata, '$.XMP-xmp:Label') AS Label,
+json_extract(Metadata, '$.XMP-photoshop:Urgency') AS Urgency
 FROM Image;
 DROP VIEW IF EXISTS "vLegacyWindowsXP";
 CREATE VIEW vLegacyWindowsXP AS
@@ -531,6 +538,14 @@ GROUP BY
         WHEN TRIM(Rating) = '' THEN '(not specified)'
         ELSE Rating
     END;
+DROP VIEW IF EXISTS "vRatings";
+CREATE VIEW vRatings AS
+SELECT ImageId,Filepath, Rating,
+json_extract(Metadata, '$.XMP-xmp:Rating') AS XMPRating,
+json_extract(Metadata, '$.XMP-microsoft:RatingPercent') AS MicrosoftRating, 
+json_extract(Metadata, '$.IFD0:Rating') AS ExifRating,
+json_extract(Metadata, '$.IFD0:RatingPercent') AS ExifRatingPercent
+FROM Image;
 DROP VIEW IF EXISTS "vRecentlyModified";
 CREATE VIEW vRecentlyModified AS
 SELECT Filepath,FileModifiedDate, Metadata
