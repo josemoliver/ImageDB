@@ -189,6 +189,55 @@ json_extract(Metadata, '$.IPTC:By-line') AS ByLine,
 json_extract(Metadata, '$.XMP-dc:Creator') AS Creator, 
 json_extract(Metadata, '$.XMP-tiff:Artist') AS TiffArtist
 FROM Image;
+DROP VIEW IF EXISTS "vCreatorCount";
+CREATE VIEW vCreatorCount AS
+WITH Converted AS (
+    SELECT
+        COALESCE(NULLIF(Creator, ''), '(unknown)') AS Creator,
+        Filesize,
+
+        -- Convert "YYYY-MM-DD HH:MM:SS AM/PM" → ISO 8601
+        datetime(
+            substr(DateTimeTaken, 1, 10) || ' ' ||                        -- YYYY-MM-DD
+            printf(
+                '%02d:%s:%s',
+                CASE
+                    WHEN substr(DateTimeTaken, 21, 2) = 'AM'
+                        THEN (
+                            CASE
+                                WHEN substr(DateTimeTaken, 12, 2) = '12'
+                                    THEN '00'                             -- 12 AM → 00
+                                ELSE substr(DateTimeTaken, 12, 2)         -- AM hour stays the same
+                            END
+                        )
+                    ELSE (
+                        CASE
+                            WHEN substr(DateTimeTaken, 12, 2) = '12'
+                                THEN '12'                                 -- 12 PM → 12
+                            ELSE printf('%02d', substr(DateTimeTaken, 12, 2) + 12)
+                        END
+                    )
+                END,
+                substr(DateTimeTaken, 15, 2),                             -- minutes
+                substr(DateTimeTaken, 18, 2)                              -- seconds
+            )
+        ) AS ISODateTime
+
+    FROM Image
+),
+Totals AS (
+    SELECT COUNT(*) AS TotalImages FROM Converted
+)
+SELECT
+    Creator,
+    COUNT(*) AS ImageCount,
+    ROUND(COUNT(*) * 100.0 / (SELECT TotalImages FROM Totals), 2) AS ImagePercentage,
+    SUM(Filesize) AS Size,
+    MIN(ISODateTime) AS MinDateTimeTaken,
+    MAX(ISODateTime) AS MaxDateTimeTaken
+FROM Converted
+GROUP BY Creator
+ORDER BY ImageCount DESC;
 DROP VIEW IF EXISTS "vDates";
 CREATE VIEW vDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
@@ -212,16 +261,53 @@ json_extract(Metadata, '$.IFD0:Model') AS Model
 FROM Image;
 DROP VIEW IF EXISTS "vDevicesCount";
 CREATE VIEW vDevicesCount AS
-SELECT 
-    COALESCE(NULLIF(Device, ''), '(unknown)') AS Device,
-    COUNT(Device) AS DeviceCount,
-    ROUND(
-        100.0 * COUNT(Device) / (SELECT COUNT(*) FROM vDevices),
-        2
-    ) AS DevicePercent
-FROM vDevices
-GROUP BY COALESCE(NULLIF(Device, ''), '(unknown)')
-ORDER BY DeviceCount DESC;
+WITH Converted AS (
+    SELECT
+        COALESCE(NULLIF(Device, ''), '(unknown)') AS Device,
+        Filesize,
+
+        -- Convert "YYYY-MM-DD HH:MM:SS AM/PM" → ISO 8601
+        datetime(
+            substr(DateTimeTaken, 1, 10) || ' ' ||                        -- YYYY-MM-DD
+            printf(
+                '%02d:%s:%s',
+                CASE
+                    WHEN substr(DateTimeTaken, 21, 2) = 'AM'
+                        THEN (
+                            CASE
+                                WHEN substr(DateTimeTaken, 12, 2) = '12'
+                                    THEN '00'                             -- 12 AM → 00
+                                ELSE substr(DateTimeTaken, 12, 2)         -- AM hour stays the same
+                            END
+                        )
+                    ELSE (
+                        CASE
+                            WHEN substr(DateTimeTaken, 12, 2) = '12'
+                                THEN '12'                                 -- 12 PM → 12
+                            ELSE printf('%02d', substr(DateTimeTaken, 12, 2) + 12)
+                        END
+                    )
+                END,
+                substr(DateTimeTaken, 15, 2),                             -- minutes
+                substr(DateTimeTaken, 18, 2)                              -- seconds
+            )
+        ) AS ISODateTime
+
+    FROM Image
+),
+Totals AS (
+    SELECT COUNT(*) AS TotalImages FROM Converted
+)
+SELECT
+    Device,
+    COUNT(*) AS ImageCount,
+    ROUND(COUNT(*) * 100.0 / (SELECT TotalImages FROM Totals), 2) AS ImagePercentage,
+    SUM(Filesize) AS Size,
+    MIN(ISODateTime) AS MinDateTimeTaken,
+    MAX(ISODateTime) AS MaxDateTimeTaken
+FROM Converted
+GROUP BY Device
+ORDER BY ImageCount DESC;
 DROP VIEW IF EXISTS "vDuplicateFilenames";
 CREATE VIEW vDuplicateFilenames AS
 SELECT LOWER(Filename) AS Filename, COUNT(*) 
