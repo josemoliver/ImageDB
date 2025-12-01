@@ -28,7 +28,7 @@ namespace ImageDB
         public string FilePath { get; set; }
 
         /// <summary>
-        /// Gets or sets the file modification date as a string. (yyyy-MM-dd hh:mm:ss tt).
+        /// Gets or sets the file modification date as a string. (yyyy-MM-dd HH:mm:ss).
         /// </summary>
         public string FileModifiedDate { get; set; }
 
@@ -48,7 +48,7 @@ namespace ImageDB
         public long FileSize { get; set; }
 
         /// <summary>
-        /// Gets or sets the file creation date as a string. (yyyy-MM-dd hh:mm:ss tt).
+        /// Gets or sets the file creation date as a string. (yyyy-MM-dd HH:mm:ss).
         /// </summary>
         public string FileCreatedDate { get; set; }
 
@@ -56,11 +56,11 @@ namespace ImageDB
         /// Initializes a new instance of the <see cref="ImageFile"/> class with the provided metadata values.
         /// </summary>
         /// <param name="filePath">Full path to the file.</param>
-        /// <param name="fileModifiedDate">Modification timestamp as a string (yyyy-MM-dd hh:mm:ss tt).</param>
+        /// <param name="fileModifiedDate">Modification timestamp as a string (yyyy-MM-dd HH:mm:ss).</param>
         /// <param name="fileExtension">File extension, including the dot (e.g., ".png").</param>
         /// <param name="fileName">File name.</param>
         /// <param name="fileSize">File size in bytes.</param>
-        /// <param name="fileCreatedDate">Creation timestamp as a string (yyyy-MM-dd hh:mm:ss tt).</param>
+        /// <param name="fileCreatedDate">Creation timestamp as a string (yyyy-MM-dd HH:mm:ss).</param>
         public ImageFile(string filePath, string fileModifiedDate, string fileExtension, string fileName, long fileSize, string fileCreatedDate)
         {
             FilePath = filePath;
