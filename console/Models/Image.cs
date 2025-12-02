@@ -70,4 +70,6 @@ public partial class Image
     public string RecordModified { get; set; }
 
     public int? ModifiedBatchId { get; set; }
+
+    public string DateTimeTakenSource { get; set; }
 }

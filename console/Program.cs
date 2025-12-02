@@ -266,7 +266,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 continue; // Skip this file
             }
                        
-            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt"), file.Extension.ToString().ToLower(), file.Name.ToString(),file.Length,file.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt")));         
+            imageFiles.Add(new ImageFile(file.FullName.ToString(), file.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"), file.Extension.ToString().ToLower(), file.Name.ToString(),file.Length,file.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")));         
         }
 
         // Start Batch entry get batch id
@@ -518,7 +518,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
 
             // Get elapsed time in seconds
             int elapsedTime = 0;
-            string endDateTime = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
+            string endDateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
             try { elapsedTime = (int)(DateTime.Parse(endDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
 
@@ -611,8 +611,8 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             // Get the file size and creation/modification dates
             FileInfo fileInfo       = new FileInfo(specificFilePath);
             long fileSize           = fileInfo.Length;
-            string fileDateCreated  = fileInfo.CreationTime.ToString("yyyy-MM-dd hh:mm:ss tt");
-            string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd hh:mm:ss tt");
+            string fileDateCreated  = fileInfo.CreationTime.ToString("yyyy-MM-dd HH:mm:ss");
+            string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
 
             // Update the fields with new values
             image.Filesize          = fileSize;
@@ -620,7 +620,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.FileModifiedDate  = fileDateModified;
             image.Metadata          = jsonMetadata;
             image.StuctMetadata     = structJsonMetadata;
-            image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt");
+            image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
             // Save changes to the database
             int retryCount = 5;
@@ -698,7 +698,7 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 
                 Metadata = jsonMetadata,
                 StuctMetadata = structJsonMetadata,
-                RecordAdded = DateTime.Now.ToString("yyyy-MM-dd hh:mm:ss tt")
+                RecordAdded = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
             };
 
             dbFiles.Add(newImage);
@@ -733,6 +733,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         string rating                   = String.Empty;
         string dateTimeTaken            = String.Empty;
         string dateTimeTakenTimeZone    = String.Empty;
+        string dateTimeTakenSource      = String.Empty;
         string deviceMake               = String.Empty;
         string deviceModel              = String.Empty;
         string device                   = String.Empty;
@@ -818,8 +819,8 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
             sourceFile          = GetExiftoolValue(doc, "SourceFile").Replace("/","\\");
 
             // Format file datetime to desired format
-            fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
-            fileModifiedDate    = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd hh:mm:ss tt");
+            fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd HH:mm:ss");
+            fileModifiedDate    = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd HH:mm:ss");
 
             // I. Image.Title 
 
@@ -858,15 +859,17 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
                 //XMP-photoshop:DateCreated (1st option - Preferred)
                 if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
-                { dateTimeTaken = ConvertDateToNewFormat(propertyPhotoshopDate.GetString().Trim()) ?? "";
-                  tzDateTime = propertyPhotoshopDate.GetString() ?? "";
+                { 
+                    dateTimeTaken = ConvertDateToNewFormat(propertyPhotoshopDate.GetString().Trim()) ?? "";
+                    dateTimeTakenSource = "XMP-photoshop:DateCreated";
+                    tzDateTime = propertyPhotoshopDate.GetString() ?? "";
                 }
 
                 //ExifIFD:DateTimeOriginal (2nd option)
                 if (dateTimeTaken == String.Empty)
                 {       
                     if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
-                    { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString().Trim()) ?? ""; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
+                    { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:DateTimeOriginal"; } //Exif DateTime does not contain time-zone information which is stored separately per Exif 2.32 spec. 
                 }
 
                 //ExifIFD:CreateDate (3rd option)
@@ -874,16 +877,16 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 {
                     //ExifIFD:CreateDate
                     if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
-                    { dateTimeTaken = ConvertDateToNewFormat(propertyCreateDate.GetString().Trim()) ?? ""; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
+                    { dateTimeTaken = ConvertDateToNewFormat(propertyCreateDate.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:CreateDate"; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
                 }
 
                 // XMP-exif:DateTimeOriginal (4th option)
                 if (dateTimeTaken == String.Empty)
                 {
-                    // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal and ExifIFD:CreateDate over IPTC DateTime as some applications use this.
+                    // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal as some applications use this.
                     if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
-                    { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? "";
-                      if (tzDateTime== String.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
+                    { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? ""; dateTimeTakenSource = "XMP-exif:DateTimeOriginal";
+                    if (tzDateTime== String.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
                     }
                 }
 
@@ -916,14 +919,28 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                     }
 
                     dateTimeTaken = iptcDateTime;
+                    if (dateTimeTaken != String.Empty)
+                    {
+                        dateTimeTakenSource = "IPTC:DateCreated + IPTC:TimeCreated";
+                    }
                 }      
            
-                // File system create date (6th option)
+                // Select the oldest file system date between created or modified. (6th option)
                 if (dateTimeTaken == String.Empty)
                 {
-                    // If all else fails to retrieve dateTime from the file metadata.
-                    // Not part of the MWG spec - Use the file's system File Creation Date as a last resort for DateTimeTaken.
-                    dateTimeTaken = fileCreatedDate;
+                // If all else fails to retrieve dateTime from the file metadata.
+                // Not part of the MWG spec - Use the file's system File Creation Date as a last resort for DateTimeTaken.
+
+                    if (DateTime.Parse(fileCreatedDate) > DateTime.Parse(fileModifiedDate))
+                    {
+                        dateTimeTaken = fileModifiedDate;
+                        dateTimeTakenSource = "File Modified Date";
+                    }
+                    else
+                    {
+                        dateTimeTaken = fileCreatedDate;
+                        dateTimeTakenSource = "File Created Date";
+                    }
                 }    
 
 
@@ -1195,6 +1212,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 image.Copyright                 = copyright;
                 image.FileCreatedDate           = fileCreatedDate;
                 image.FileModifiedDate          = fileModifiedDate;
+                image.DateTimeTakenSource       = dateTimeTakenSource;
 
                 // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
                 if (updatedSHA1 != String.Empty)
@@ -1376,9 +1394,9 @@ static string GetJsonValue(JsonDocument doc, string exiftoolTag)
     return string.Empty;
 }
 
-// Convert the date string to the new format "yyyy-MM-dd h:mm:ss tt" or  simple date format "yyyy-MM-dd"
-// Example: "2023:10:01 12:34:56" -> "2023-10-01 12:34:56 PM"
-// Example: "2023:10:01 12:34:56.789" -> "2023-10-01 12:34:56 PM"
+// Convert the date string to the new format "yyyy-MM-dd HH:mm:ss" or  simple date format "yyyy-MM-dd"
+// Example: "2023:10:01 12:34:56" -> "2023-10-01 12:34:56"
+// Example: "2023:10:01 12:34:56.789" -> "2023-10-01 16:34:56"
 // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
 // Ref: https://savemetadata.org (Dates)
 static string ConvertDateToNewFormat(string inputDate)
@@ -1413,8 +1431,8 @@ static string ConvertDateToNewFormat(string inputDate)
         // Try to parse the input string with one of the formats
         if (DateTime.TryParseExact(inputDate, inputFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dateTime))
         {
-            // Convert to the desired format "yyyy-MM-dd hh:mm:ss tt"
-            return dateTime.ToString("yyyy-MM-dd hh:mm:ss tt");
+            // Convert to the desired format "yyyy-MM-dd HH:mm:ss"
+            return dateTime.ToString("yyyy-MM-dd HH:mm:ss");
         }
         else
         {
