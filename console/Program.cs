@@ -883,7 +883,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 // XMP-exif:DateTimeOriginal (4th option)
                 if (dateTimeTaken == String.Empty)
                 {
-                    // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal and ExifIFD:CreateDate over IPTC DateTime as some applications use this.
+                    // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal as some applications use this.
                     if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
                     { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? ""; dateTimeTakenSource = "XMP-exif:DateTimeOriginal";
                     if (tzDateTime== String.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
@@ -1212,6 +1212,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 image.Copyright                 = copyright;
                 image.FileCreatedDate           = fileCreatedDate;
                 image.FileModifiedDate          = fileModifiedDate;
+                image.DateTimeTakenSource       = dateTimeTakenSource;
 
                 // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
                 if (updatedSHA1 != String.Empty)

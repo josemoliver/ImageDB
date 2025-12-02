@@ -57,6 +57,7 @@ CREATE TABLE "Image" (
 	"AddedBatchId"	INTEGER,
 	"RecordModified"	TEXT,
 	"ModifiedBatchId"	INTEGER,
+	"DateTimeTakenSource"	TEXT,
 	PRIMARY KEY("ImageId" AUTOINCREMENT)
 );
 DROP TABLE IF EXISTS "Location";
@@ -153,25 +154,16 @@ WITH Converted AS (
     PhotoLibraryId,
     Album,
     Filesize,
-    datetime(
-      substr(DateTimeTaken, 1, 10) || ' ' ||
-      printf('%02d',
-        CASE 
-          WHEN substr(DateTimeTaken, 12, 2) = '12' AND substr(DateTimeTaken, 21, 2) = 'AM' THEN 0
-          WHEN substr(DateTimeTaken, 21, 2) = 'PM' AND substr(DateTimeTaken, 12, 2) != '12' THEN CAST(substr(DateTimeTaken, 12, 2) AS INTEGER) + 12
-          ELSE CAST(substr(DateTimeTaken, 12, 2) AS INTEGER)
-        END
-      ) || substr(DateTimeTaken, 14, 6)
-    ) AS ConvertedDateTime
+    DateTimeTaken
   FROM Image
 )
 SELECT
   PhotoLibraryId,
   Album,
-  MIN(ConvertedDateTime) AS MinDateTimeTaken,
-  MAX(ConvertedDateTime) AS MaxDateTimeTaken,
+  MIN(DateTimeTaken) AS MinDateTimeTaken,
+  MAX(DateTimeTaken) AS MaxDateTimeTaken,
   CAST(
-    (julianday(MAX(ConvertedDateTime)) - julianday(MIN(ConvertedDateTime)))
+    (julianday(MAX(DateTimeTaken)) - julianday(MIN(DateTimeTaken)))
     AS INTEGER
   ) AS Days,
   SUM(Filesize) AS TotalFilesize,
@@ -195,34 +187,7 @@ WITH Converted AS (
     SELECT
         COALESCE(NULLIF(Creator, ''), '(unknown)') AS Creator,
         Filesize,
-
-        -- Convert "YYYY-MM-DD HH:MM:SS AM/PM" → ISO 8601
-        datetime(
-            substr(DateTimeTaken, 1, 10) || ' ' ||                        -- YYYY-MM-DD
-            printf(
-                '%02d:%s:%s',
-                CASE
-                    WHEN substr(DateTimeTaken, 21, 2) = 'AM'
-                        THEN (
-                            CASE
-                                WHEN substr(DateTimeTaken, 12, 2) = '12'
-                                    THEN '00'                             -- 12 AM → 00
-                                ELSE substr(DateTimeTaken, 12, 2)         -- AM hour stays the same
-                            END
-                        )
-                    ELSE (
-                        CASE
-                            WHEN substr(DateTimeTaken, 12, 2) = '12'
-                                THEN '12'                                 -- 12 PM → 12
-                            ELSE printf('%02d', substr(DateTimeTaken, 12, 2) + 12)
-                        END
-                    )
-                END,
-                substr(DateTimeTaken, 15, 2),                             -- minutes
-                substr(DateTimeTaken, 18, 2)                              -- seconds
-            )
-        ) AS ISODateTime
-
+		DateTimeTaken  
     FROM Image
 ),
 Totals AS (
@@ -233,11 +198,23 @@ SELECT
     COUNT(*) AS ImageCount,
     ROUND(COUNT(*) * 100.0 / (SELECT TotalImages FROM Totals), 2) AS ImagePercentage,
     SUM(Filesize) AS Size,
-    MIN(ISODateTime) AS MinDateTimeTaken,
-    MAX(ISODateTime) AS MaxDateTimeTaken
+    MIN(DateTimeTaken) AS MinDateTimeTaken,
+    MAX(DateTimeTaken) AS MaxDateTimeTaken
 FROM Converted
 GROUP BY Creator
 ORDER BY ImageCount DESC;
+DROP VIEW IF EXISTS "vDateTimeTakenSourceCount";
+CREATE VIEW vDateTimeTakenSourceCount AS
+SELECT DateTimeTakenSource,
+       COUNT(*) AS ImageCount
+FROM Image
+GROUP BY DateTimeTakenSource
+
+UNION ALL
+
+SELECT 'TotalImageCount' AS DateTimeTakenSource,
+       COUNT(*) AS ImageCount
+FROM Image;
 DROP VIEW IF EXISTS "vDates";
 CREATE VIEW vDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
@@ -253,6 +230,18 @@ json_extract(Metadata, '$.IFD0:XPComment') AS XPComment,
 json_extract(Metadata, '$.IPTC:Headline') AS Headline,
 json_extract(Metadata, '$.XMP-acdsee:Caption') AS ACDSeeCaption
 FROM Image;
+DROP VIEW IF EXISTS "vDescriptionsCount";
+CREATE VIEW vDescriptionsCount AS
+SELECT
+    COUNT(*) AS TotalImages,
+    COUNT(CASE WHEN Description IS NOT NULL AND TRIM(Description) <> '' THEN 1 END) AS ImagesWithDescription,
+    COUNT(CASE WHEN Description IS NULL OR TRIM(Description) = '' THEN 1 END) AS ImagesWithoutDescription,
+    ROUND(
+        100.0 * COUNT(CASE WHEN Description IS NOT NULL AND TRIM(Description) <> '' THEN 1 END) 
+        / COUNT(*),
+        2
+    ) AS PercentageWithDescription
+FROM Image;
 DROP VIEW IF EXISTS "vDevices";
 CREATE VIEW vDevices AS
 SELECT ImageId,Filepath,Device, 
@@ -265,34 +254,7 @@ WITH Converted AS (
     SELECT
         COALESCE(NULLIF(Device, ''), '(unknown)') AS Device,
         Filesize,
-
-        -- Convert "YYYY-MM-DD HH:MM:SS AM/PM" → ISO 8601
-        datetime(
-            substr(DateTimeTaken, 1, 10) || ' ' ||                        -- YYYY-MM-DD
-            printf(
-                '%02d:%s:%s',
-                CASE
-                    WHEN substr(DateTimeTaken, 21, 2) = 'AM'
-                        THEN (
-                            CASE
-                                WHEN substr(DateTimeTaken, 12, 2) = '12'
-                                    THEN '00'                             -- 12 AM → 00
-                                ELSE substr(DateTimeTaken, 12, 2)         -- AM hour stays the same
-                            END
-                        )
-                    ELSE (
-                        CASE
-                            WHEN substr(DateTimeTaken, 12, 2) = '12'
-                                THEN '12'                                 -- 12 PM → 12
-                            ELSE printf('%02d', substr(DateTimeTaken, 12, 2) + 12)
-                        END
-                    )
-                END,
-                substr(DateTimeTaken, 15, 2),                             -- minutes
-                substr(DateTimeTaken, 18, 2)                              -- seconds
-            )
-        ) AS ISODateTime
-
+	    DateTimeTaken
     FROM Image
 ),
 Totals AS (
@@ -303,8 +265,8 @@ SELECT
     COUNT(*) AS ImageCount,
     ROUND(COUNT(*) * 100.0 / (SELECT TotalImages FROM Totals), 2) AS ImagePercentage,
     SUM(Filesize) AS Size,
-    MIN(ISODateTime) AS MinDateTimeTaken,
-    MAX(ISODateTime) AS MaxDateTimeTaken
+    MIN(DateTimeTaken) AS MinDateTimeTaken,
+    MAX(DateTimeTaken) AS MaxDateTimeTaken
 FROM Converted
 GROUP BY Device
 ORDER BY ImageCount DESC;
@@ -384,6 +346,36 @@ json_extract(Metadata, '$.XMP-iptcCore:CreatorWorkEmail') AS CreatorWorkEmail,
 json_extract(Metadata, '$.XMP-iptcCore:CreatorWorkTelephone') AS CreatorWorkTelephone,
 json_extract(Metadata, '$.XMP-iptcCore:CreatorWorkURL') AS CreatorWorkURL
 FROM Image;
+DROP VIEW IF EXISTS "vImage";
+CREATE VIEW vImage AS
+SELECT ImageId, PhotoLibraryId, Filepath, Album, Format, Filename, Filesize,
+strftime('%Y-%m-%d %I:%M:%S %p', FileCreatedDate) AS FileCreatedDate,
+strftime('%Y-%m-%d %I:%M:%S %p', FileModifiedDate) AS FileModifiedDate, 
+Title,
+Description,
+Rating,
+strftime('%Y-%m-%d %I:%M:%S %p', DateTimeTaken) AS DateTimeTaken, 
+DateTimeTakenTimeZone,
+Device,
+Latitude,
+Longitude,
+Altitude,
+Location,
+City,
+StateProvince,
+Country,
+CountryCode,
+Creator,
+Copyright,
+Metadata,
+StuctMetadata,
+strftime('%Y-%m-%d %I:%M:%S %p', RecordAdded) AS RecordAdded,
+AddedBatchId,
+strftime('%Y-%m-%d %I:%M:%S %p', RecordModified) AS RecordModified,
+ModifiedBatchId,
+DateTimeTakenSource,
+SHA1
+FROM Image;
 DROP VIEW IF EXISTS "vImageCameraSettings";
 CREATE VIEW vImageCameraSettings AS
 SELECT ImageId,Filepath,Filename,
@@ -397,6 +389,12 @@ json_extract(Metadata, '$.Composite:FocalLength35efl') AS FocalLength35efl,
 json_extract(Metadata, '$.Composite:HyperfocalDistance') AS HyperfocalDistance,
 json_extract(Metadata, '$.Composite:LensID') AS LensID
 FROM Image;
+DROP VIEW IF EXISTS "vImageUniqueID";
+CREATE VIEW vImageUniqueID AS
+SELECT ImageId,Filepath, 
+json_extract(Metadata, '$.ExifIFD:ImageUniqueID') AS ImageUniqueID
+FROM Image
+ORDER BY Filepath ASC;
 DROP VIEW IF EXISTS "vLabels";
 CREATE VIEW vLabels AS
 SELECT ImageId,Filepath,
@@ -699,6 +697,18 @@ SELECT ImageId,Filepath,
 json_extract(Metadata, '$.XMP-dc:Title') AS Title,
 json_extract(Metadata, '$.IPTC:ObjectName') AS ObjectName, 
 json_extract(Metadata, '$.IFD0:XPTitle') AS XPTitle
+FROM Image;
+DROP VIEW IF EXISTS "vTitlesCount";
+CREATE VIEW vTitlesCount AS
+SELECT
+    COUNT(*) AS TotalImages,
+    COUNT(CASE WHEN Title IS NOT NULL AND TRIM(Title) <> '' THEN 1 END) AS ImagesWithTitle,
+    COUNT(CASE WHEN Title IS NULL OR TRIM(Title) = '' THEN 1 END) AS ImagesWithoutTitle,
+    ROUND(
+        100.0 * COUNT(CASE WHEN Title IS NOT NULL AND TRIM(Title) <> '' THEN 1 END) 
+        / COUNT(*),
+        2
+    ) AS PercentageWithTitle
 FROM Image;
 DROP VIEW IF EXISTS "vWeatherTags";
 CREATE VIEW vWeatherTags AS

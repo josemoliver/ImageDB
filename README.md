@@ -95,7 +95,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into the `Ima
 | `Image.Description`     | XMP-dc:Description, IPTC:Caption-Abstract, IFD0:ImageDescription, ExifIFD:UserComment, XMP-tiff:ImageDescription,IFD0:XPComment,IFD0:XPSubject,IFD0:XPComment, IPTC:Headline or XMP-acdsee:Caption |
 | `Image.Album`     | Derived from the PhotoLibrary subfolder(s). Nested subfolder names are concatenated with a dash (-).  |
 | `Image.Rating`     | XMP-xmp:Rating, IFD0:Rating, IFD0:RatingPercent, or XMP-microsoft:RatingPercent |
-| `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or System:FileCreateDate |
+| `Image.DateTimeTaken`     | XMP-photoshop:DateCreated, ExifIFD:DateTimeOriginal, ExifIFD:CreateDate, XMP-exif:DateTimeOriginal, IPTC:DateCreated+IPTC:TimeCreated, or use oldest value from the File Create or Modified Date. |
 | `Image.TimeZone`     | ExifIFD:OffsetTimeOriginal, otherwise obtained from XMP-photoshop:DateCreated, XMP-exif:DateTimeOriginal, or IPTC:TimeCreated   |
 | `Image.Device`     | Combined from IFD0:Make and IFD0:Model |
 | `Image.Latitude`     | Composite:GPSLatitude (Rounded to 6 decimal places) |
@@ -108,6 +108,7 @@ Although all the metadata tags retrieved using Exiftool are loaded into the `Ima
 | `Image.CountryCode`     | XMP-iptcExt:LocationCreatedCountryCode, XMP-iptcCore:CountryCode or IPTC:Country-PrimaryLocationCode  |
 | `Image.Creator`     | XMP-dc:Creator, IPTC:By-line, IFD0:Artist, XMP-tiff:Artist, or IFD0:XPAuthor |
 | `Image.Copyright`     | XMP-dc:Rights, IPTC:CopyrightNotice, or IFD0:Copyright  |
+| `Image.DateTimeTakenSource`     | Source from were DateTimeTaken value was obtained.  |
 | `PeopleTag.PersonName`     | Merged names from XMP-MP:RegionPersonDisplayName, XMP-mwg-rs:RegionName, and XMP-iptcExt:PersonInImage  |
 | `Tag.TagName`     | Merged values from IPTC:Keywords, XMP-dc:Subject, and IFD0:XPKeywords  |
 | `Location.LocationIdentifier`     | XMP-iptcExt:LocationCreatedLocationId |
