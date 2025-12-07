@@ -1,6 +1,8 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using ImageDB;
 using ImageDB.Models;
+using ImageMagick;
+using ImageMagick.Formats;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -18,6 +20,7 @@ using System.ComponentModel.Design;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.IO.Enumeration;
@@ -36,6 +39,8 @@ using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 using static System.Formats.Asn1.AsnWriter;
 using static System.Net.Mime.MediaTypeNames;
 using static System.Net.WebRequestMethods;
+
+
 
 // ImageDB
 // Source Repo & Documentation: https://github.com/josemoliver/ImageDB
@@ -1080,7 +1085,8 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                             {
                                 foreach (var reg in structMeta.RegionInfo.RegionList)
                                 {
-                                    await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D);
+                                    byte[] jpegRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                                    await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, jpegRegionBlob);
                                 }
                             }
                         }
@@ -1628,5 +1634,78 @@ static void CopyImageToMetadataHistory(int imageId)
     }
 }
 
+
+static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, string xStr, string yStr, int maxThumbSize = 384)   // keeps SQLite BLOB sizes small
+{
+    // Parse MWG-normalized region strings
+    double h = double.Parse(hStr, CultureInfo.InvariantCulture);
+    double w = double.Parse(wStr, CultureInfo.InvariantCulture);
+    double x = double.Parse(xStr, CultureInfo.InvariantCulture);
+    double y = double.Parse(yStr, CultureInfo.InvariantCulture);
+
+    using var img = new MagickImage(imagePath);
+
+    // Width/Height are uint in MagickImage — cast explicitly to int for calculations
+    int imgWidth = (int)img.Width;
+    int imgHeight = (int)img.Height;
+
+    // Convert MWG normalized width/height to pixels (rounded)
+    int regionWidth = (int)Math.Round(w * imgWidth);
+    int regionHeight = (int)Math.Round(h * imgHeight);
+
+    // Compute MWG center-origin → top-left pixel
+    int left = (int)Math.Round((x * imgWidth) - (regionWidth / 2.0));
+    int top = (int)Math.Round((y * imgHeight) - (regionHeight / 2.0));
+
+    // Clamp boundaries
+    left = Math.Max(0, Math.Min(left, imgWidth - 1));
+    top = Math.Max(0, Math.Min(top, imgHeight - 1));
+
+    if (left + regionWidth > imgWidth)
+        regionWidth = imgWidth - left;
+
+    if (top + regionHeight > imgHeight)
+        regionHeight = imgHeight - top;
+
+    // Crop the region. MagickGeometry expects unsigned width/height in some overloads.
+    var cropGeometry = new MagickGeometry(left, top, (uint)Math.Max(0, regionWidth), (uint)Math.Max(0, regionHeight))
+    {
+        IgnoreAspectRatio = true
+    };
+
+    using var region = img.Clone();
+    region.Crop(cropGeometry);
+
+    // Clear page offset (replacement for RePage) by resetting Page to the cropped size.
+    // Page expects geometry where width/height are unsigned.
+    region.Page = new MagickGeometry(0, 0, (uint)region.Width, (uint)region.Height);
+
+    //
+    // Thumbnail resize step — reduces DB BLOB size dramatically
+    //
+    int maxDim = Math.Max((int)region.Width, (int)region.Height);
+    if (maxDim > maxThumbSize)
+    {
+        double scale = (double)maxThumbSize / maxDim;
+        int newW = (int)Math.Round(region.Width * scale);
+        int newH = (int)Math.Round(region.Height * scale);
+
+        // Use unsigned constructor for MagickGeometry(width, height)
+        region.Resize(new MagickGeometry((uint)Math.Max(1, newW), (uint)Math.Max(1, newH))
+        {
+            IgnoreAspectRatio = false
+        });
+    }
+
+    // Encode to WebP by setting Format and Quality on the image instance.
+    // Avoid using WebPWriteDefines + ToByteArray overload which is not available.
+    region.Format = MagickFormat.WebP;
+
+    // Set quality (75 is a reasonable default). Quality is an int property on MagickImage.
+    region.Quality = 60;
+
+    // Return encoded bytes (ToByteArray uses current Format)
+    return region.ToByteArray();
+}
 
 

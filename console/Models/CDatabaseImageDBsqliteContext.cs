@@ -146,6 +146,7 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.Property(e => e.RegionAreaW).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaX).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaY).HasColumnType("NUMERIC");
+            entity.Property(e => e.RegionThumbnail).HasDefaultValueSql("NULL");
         });
 
         modelBuilder.Entity<RelationPeopleTag>(entity =>
