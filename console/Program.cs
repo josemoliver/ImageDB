@@ -217,7 +217,7 @@ void SetScanMode(string mode)
 }
 
 
-void LogEntry(int batchId, string filePath, string logEntry)
+static void LogEntry(int batchId, string filePath, string logEntry)
 {
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -1490,7 +1490,7 @@ static string RoundCoordinate(string stringCoordinate, int decimalPlaces)
     // Check if the string is not empty and can be parsed to a decimal
     if (!string.IsNullOrEmpty(stringCoordinate) && decimal.TryParse(stringCoordinate, out decimal coordinate))
     {
-        // Round the decimal value to defined decimal places
+        // Round the decimal value to the defined decimal places
         coordinate = Math.Round(coordinate, decimalPlaces);
         // Return the rounded value as a string
         return coordinate.ToString("F"+ decimalPlaces);
@@ -1771,5 +1771,6 @@ static byte[] ImageToThumbnailBlob(string imagePath, int maxThumbSize = 384)
     //
     return img.ToByteArray();
 }
+
 
 
