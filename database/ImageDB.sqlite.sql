@@ -58,6 +58,7 @@ CREATE TABLE "Image" (
 	"RecordModified"	TEXT,
 	"ModifiedBatchId"	INTEGER,
 	"DateTimeTakenSource"	TEXT,
+	"Thumbnail"	BLOB DEFAULT NULL,
 	PRIMARY KEY("ImageId" AUTOINCREMENT)
 );
 DROP TABLE IF EXISTS "Location";
@@ -124,6 +125,7 @@ CREATE TABLE "Region" (
 	"RegionAreaX"	NUMERIC,
 	"RegionAreaY"	NUMERIC,
 	"RegionAreaD"	NUMERIC,
+	"RegionThumbnail"	BLOB DEFAULT NULL,
 	PRIMARY KEY("RegionId" AUTOINCREMENT)
 );
 DROP TABLE IF EXISTS "Tag";
@@ -170,6 +172,61 @@ SELECT
   COUNT(*) AS ImageCount
 FROM Converted
 GROUP BY PhotoLibraryId, Album;
+DROP VIEW IF EXISTS "vAlbumsGeotags";
+CREATE VIEW vAlbumsGeotags AS
+WITH Groups AS (
+    SELECT
+        PhotoLibraryId,
+		Album,
+		Location,
+        City,
+        StateProvince,
+        Country,
+        CountryCode,
+        AVG(Latitude)  AS CentroidLat,
+        AVG(Longitude) AS CentroidLon,
+        COUNT(*)       AS FileCount
+    FROM Image
+    GROUP BY Location, StateProvince, Country, City, Album, PhotoLibraryId
+),
+Distances AS (
+    SELECT
+		i.PhotoLibraryId,
+		i.Album,
+        i.Location,
+        i.City,
+        i.StateProvince,
+        i.Country,
+        i.CountryCode,
+        g.CentroidLat,
+        g.CentroidLon,
+        g.FileCount,
+        (
+            6371000 * acos(
+                cos(radians(g.CentroidLat)) *
+                cos(radians(i.Latitude)) *
+                cos(radians(i.Longitude) - radians(g.CentroidLon)) +
+                sin(radians(g.CentroidLat)) *
+                sin(radians(i.Latitude))
+            )
+        ) AS Distance
+    FROM Image i
+    JOIN Groups g USING (Location, City, StateProvince, Country, Album, PhotoLibraryId)
+)
+SELECT
+    PhotoLibraryId,
+    Album,
+    Location,
+    City,
+    StateProvince,
+    Country,
+    CountryCode,
+    CentroidLat AS Latitude,
+    CentroidLon AS Longitude,
+    FileCount,
+    (1.645 * sqrt(AVG(Distance*Distance) - AVG(Distance)*AVG(Distance))) AS Radius
+FROM Distances
+GROUP BY Location, City, StateProvince, Country, Album, PhotoLibraryId;
 DROP VIEW IF EXISTS "vCollections";
 CREATE VIEW vCollections AS
 SELECT CollectionName, CollectionURI, Count (CollectionId) AS GroupingCount FROM Collection GROUP BY CollectionName, CollectionURI ORDER BY CollectionName, CollectionURI;
@@ -292,6 +349,16 @@ json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsW') AS RWidth,
 json_extract(Metadata, '$.XMP-mwg-rs:RegionAppliedToDimensionsH') AS RHeight,
 Metadata
 FROM Image;
+DROP VIEW IF EXISTS "vGPS";
+CREATE VIEW vGPS AS
+SELECT ImageId,Filepath, DateTimeTakenTimeZone, 
+json_extract(Metadata, '$.GPS:GPSLatitude') AS GPSLatitude,
+json_extract(Metadata, '$.GPS:GPSLongitude') AS GPSLongitude,
+json_extract(Metadata, '$.XMP-exif:GPSLatitude') AS xGPSLatitude,
+json_extract(Metadata, '$.XMP-exif:GPSLongitude') AS xGPSLongitude,
+Metadata
+FROM Image
+ORDER BY Filepath ASC;
 DROP VIEW IF EXISTS "vGeneralMetadata";
 CREATE VIEW vGeneralMetadata AS
 SELECT 
@@ -323,9 +390,53 @@ GROUP BY
     Image.ImageId;
 DROP VIEW IF EXISTS "vGeotags";
 CREATE VIEW vGeotags AS
-SELECT Location,City,StateProvince,Country,CountryCode, AVG(Latitude) AS Latitude, AVG(Longitude) AS Longitude, Count(ImageId) AS FileCount
-FROM Image
-GROUP BY Location,StateProvince,Country,City;
+WITH Groups AS (
+    SELECT
+        Location,
+        City,
+        StateProvince,
+        Country,
+        CountryCode,
+        AVG(Latitude)  AS CentroidLat,
+        AVG(Longitude) AS CentroidLon,
+        COUNT(*)       AS FileCount
+    FROM Image
+    GROUP BY Location, StateProvince, Country, City
+),
+Distances AS (
+    SELECT
+        i.Location,
+        i.City,
+        i.StateProvince,
+        i.Country,
+        i.CountryCode,
+        g.CentroidLat,
+        g.CentroidLon,
+        g.FileCount,
+        (
+            6371000 * acos(
+                cos(radians(g.CentroidLat)) *
+                cos(radians(i.Latitude)) *
+                cos(radians(i.Longitude) - radians(g.CentroidLon)) +
+                sin(radians(g.CentroidLat)) *
+                sin(radians(i.Latitude))
+            )
+        ) AS Distance
+    FROM Image i
+    JOIN Groups g USING (Location, City, StateProvince, Country)
+)
+SELECT
+    Location,
+    City,
+    StateProvince,
+    Country,
+    CountryCode,
+    CentroidLat AS Latitude,
+    CentroidLon AS Longitude,
+    FileCount,
+    (1.645 * sqrt(AVG(Distance*Distance) - AVG(Distance)*AVG(Distance))) AS Radius
+FROM Distances
+GROUP BY Location, City, StateProvince, Country;
 DROP VIEW IF EXISTS "vIPTCDigest";
 CREATE VIEW vIPTCDigest AS
 SELECT Filepath, json_extract(Metadata, '$.XMP-photoshop:LegacyIPTCDigest') AS LegacyIPTCDigest,json_extract(Metadata, '$.File:CurrentIPTCDigest') AS CurrentIPTCDigest, Metadata FROM Image WHERE LegacyIPTCDigest IS NOT NULL;
@@ -436,8 +547,18 @@ Metadata
 FROM Image;
 DROP VIEW IF EXISTS "vLensInfo";
 CREATE VIEW vLensInfo AS
-SELECT ImageId,Filepath, 
-json_extract(Metadata, '$.Composite:LensID') AS LensID
+SELECT ImageId,Filepath,Device, 
+json_extract(Metadata, '$.Composite:LensID') AS LensID,
+json_extract(Metadata, '$.ExifIFD:LensInfo') AS LensInfo,
+json_extract(Metadata, '$.ExifIFD:LensModel') AS LensType,
+json_extract(Metadata, '$.ExifIFD:LensSerialNumber') AS LensSerialNumber,
+json_extract(Metadata, '$.XMP-microsoft:LensManufacturer') AS MSLensManufacturer,
+json_extract(Metadata, '$.XMP-microsoft:LensModel') AS MSLensModel,
+json_extract(Metadata, '$.Canon:LensType') AS CanonLensType,
+json_extract(Metadata, '$.Olympus:LensModel') AS OlympusLensModel,
+json_extract(Metadata, '$.Sony:LensType') AS SonyLensType,
+json_extract(Metadata, '$.Nikon:LensType') AS NikonLensType,
+Metadata
 FROM Image;
 DROP VIEW IF EXISTS "vMetadataKeys";
 CREATE VIEW vMetadataKeys AS

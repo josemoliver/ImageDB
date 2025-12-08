@@ -72,4 +72,6 @@ public partial class Image
     public int? ModifiedBatchId { get; set; }
 
     public string DateTimeTakenSource { get; set; }
+
+    public byte[] Thumbnail { get; set; }
 }

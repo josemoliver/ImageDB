@@ -2,44 +2,15 @@
 using ImageDB;
 using ImageDB.Models;
 using ImageMagick;
-using ImageMagick.Formats;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
-using Microsoft.EntityFrameworkCore.Sqlite;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
-using System;
 using System.CommandLine;
-using System.CommandLine.Invocation;
 using System.CommandLine.NamingConventionBinder;
-using System.ComponentModel.Design;
-using System.Data.Common;
-using System.Diagnostics;
-using System.Diagnostics.Metrics;
-using System.Drawing;
 using System.Globalization;
-using System.IO;
-using System.IO.Enumeration;
-using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
-using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using System.Threading.Channels;
-using System.Xml.Linq;
-using static ImageDB.MetadataStuct;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
-using static System.Formats.Asn1.AsnWriter;
-using static System.Net.Mime.MediaTypeNames;
-using static System.Net.WebRequestMethods;
-
 
 
 // ImageDB
@@ -66,18 +37,40 @@ var rootCommand = new RootCommand
 
 using var db = new CDatabaseImageDBsqliteContext();
 
-var photoLibrary            = db.PhotoLibraries.ToList();
-string photoFolderFilter    = string.Empty;
-string operationMode        = string.Empty;
-bool reloadMetadata         = false;
-bool quickScan              = false;
-bool dateScan               = false;
+var photoLibrary                = db.PhotoLibraries.ToList();
+string photoFolderFilter        = string.Empty;
+string operationMode            = string.Empty;
+bool reloadMetadata             = false;
+bool quickScan                  = false;
+bool dateScan                   = false;
+bool generateThumbnails         = true;
+bool generateRegionThumbnails   = true;
 
 Console.WriteLine("ImageDB - Scan and update your photo library.");
 Console.WriteLine("---------------------------------------------");
 Console.WriteLine("Code and Info: https://github.com/josemoliver/ImageDB");
 Console.WriteLine("Leveraging the Exiftool utility written by Phil Harvey - https://exiftool.org");
 Console.WriteLine("");
+
+// Get RegionThumbs and Thumbnail generation settings from appsettings.json
+var configuration = new ConfigurationManager().AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).Build();
+try
+{
+    generateThumbnails = configuration.GetValue<bool>("GenerateThumbnails");
+}
+catch
+{
+    generateThumbnails = true;
+}
+
+try
+{
+    generateRegionThumbnails = configuration.GetValue<bool>("GenerateRegionThumbnails");
+}
+catch
+{
+    generateRegionThumbnails = true;
+}
 
 // Handler to process the command-line arguments
 rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
@@ -619,6 +612,22 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             string fileDateCreated  = fileInfo.CreationTime.ToString("yyyy-MM-dd HH:mm:ss");
             string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
 
+            // Generate thumbnail
+            byte[]? imageThumbnail = null;
+
+            if (generateThumbnails == true)
+            {
+                try
+                {
+                    imageThumbnail = ImageToThumbnailBlob(specificFilePath);
+                }
+                catch
+                {
+                    // If thumbnail generation fails, set to null
+                    imageThumbnail = null;
+                }
+            }
+
             // Update the fields with new values
             image.Filesize          = fileSize;
             image.FileCreatedDate   = fileDateCreated;
@@ -626,6 +635,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.Metadata          = jsonMetadata;
             image.StuctMetadata     = structJsonMetadata;
             image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            image.Thumbnail         = imageThumbnail; 
 
             // Save changes to the database
             int retryCount = 5;
@@ -643,7 +653,7 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             }
         }
     }
-
+        
     UpdateImageRecord(imageId, updatedSHA1, batchID);
 }
 
@@ -687,8 +697,24 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             fileExtension = normalizedExtension;
         }
 
-        // Add the new image to the database
-        using var dbFiles = new CDatabaseImageDBsqliteContext();
+        // Generate thumbnail
+        byte[]? imageThumbnail = null;
+
+        if (generateThumbnails == true)
+        {
+            try
+            {
+                imageThumbnail = ImageToThumbnailBlob(specificFilePath);
+            }
+            catch
+            {
+                // If thumbnail generation fails, set to null
+                imageThumbnail = null;
+            }
+        }
+
+    // Add the new image to the database
+    using var dbFiles = new CDatabaseImageDBsqliteContext();
         {
             var newImage = new ImageDB.Models.Image
             {
@@ -703,7 +729,9 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 
                 Metadata = jsonMetadata,
                 StuctMetadata = structJsonMetadata,
-                RecordAdded = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                RecordAdded = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                
+                Thumbnail = imageThumbnail
             };
 
             dbFiles.Add(newImage);
@@ -1083,11 +1111,18 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                         {
                             if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
                             {
-                                foreach (var reg in structMeta.RegionInfo.RegionList)
+                               foreach (var reg in structMeta.RegionInfo.RegionList)
                                 {
-                                    byte[] jpegRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
-                                    await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, jpegRegionBlob);
-                                }
+                                    byte[]? webpRegionBlob = null;
+
+                                    if (generateRegionThumbnails == true)
+                                    {
+                                        webpRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                                    }
+
+                                    await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob);
+                                 }
+                                
                             }
                         }
                         catch (Exception ex)
@@ -1706,6 +1741,55 @@ static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, s
 
     // Return encoded bytes (ToByteArray uses current Format)
     return region.ToByteArray();
+}
+
+static byte[] ImageToThumbnailBlob(string imagePath, int maxThumbSize = 384)
+{
+    using var img = new MagickImage(imagePath);
+
+    // Apply EXIF orientation
+    img.AutoOrient();
+
+    int imgWidth = (int)img.Width;
+    int imgHeight = (int)img.Height;
+
+    //
+    // Compute proper thumbnail dimensions (preserving aspect ratio)
+    //
+    int maxDim = Math.Max(imgWidth, imgHeight);
+    int newW = imgWidth;
+    int newH = imgHeight;
+
+    if (maxDim > maxThumbSize)
+    {
+        double scale = (double)maxThumbSize / maxDim;
+        newW = (int)Math.Round(imgWidth * scale);
+        newH = (int)Math.Round(imgHeight * scale);
+    }
+
+    //
+    // Resize internal image buffer
+    //
+    img.Resize(new MagickGeometry((uint)Math.Max(newW, 1), (uint)Math.Max(newH, 1))
+    {
+        IgnoreAspectRatio = false
+    });
+
+    //
+    // Reset page offset (replacement for RePage)
+    //
+    img.Page = new MagickGeometry(0, 0, (uint)img.Width, (uint)img.Height);
+
+    //
+    // Encode as WebP
+    //
+    img.Format = MagickFormat.WebP;
+    img.Quality = 60;   // lightweight thumbnail—tweak as needed
+
+    //
+    // Return blob
+    //
+    return img.ToByteArray();
 }
 
 
