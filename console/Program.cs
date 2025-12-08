@@ -141,12 +141,12 @@ if (((operationMode == "normal") || (operationMode == "date") || (operationMode 
                 if (reloadMetadata == true)
                 {
                     Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
-                    ReloadMetadata(photoLibraryId);
+                    await ReloadMetadata(photoLibraryId);
                 }
                 else
                 {
                     Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
-                    ScanFiles(photoFolder, photoLibraryId);
+                    await ScanFiles(photoFolder, photoLibraryId);
                 }
             }
         }
@@ -167,6 +167,30 @@ else
     Environment.Exit(1);
 }
 
+/// <summary>
+/// Saves changes to the database with SQLite lock retry logic.
+/// Retries up to 5 times with 1 second delay between attempts.
+/// </summary>
+/// <param name="context">The database context to save</param>
+static async Task SaveChangesWithRetry(DbContext context)
+{
+    const int maxRetries = 5;
+    int retryCount = maxRetries;
+    
+    while (retryCount-- > 0)
+    {
+        try
+        {
+            await context.SaveChangesAsync();
+            return;
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
+        {
+            if (retryCount == 0) throw;
+            await Task.Delay(1000);
+        }
+    }
+}
 
 // Method to set the scan mode based on the input
 void SetScanMode(string mode)
@@ -211,7 +235,7 @@ void LogEntry(int batchId, string filePath, string logEntry)
     }
 }
 
-void ReloadMetadata(int photoLibraryId)
+async Task ReloadMetadata(int photoLibraryId)
 {
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -220,13 +244,13 @@ void ReloadMetadata(int photoLibraryId)
 
         foreach (var imageId in imageIdsFromLibrary)
         {
-            UpdateImageRecord(imageId, "", null);
+            await UpdateImageRecord(imageId, "", null);
             Console.WriteLine("[UPDATE] - Reprocessing metadata for Image Id: " + imageId);
         }
     }
 }
 
-void ScanFiles(string photoFolder, int photoLibraryId)
+async Task ScanFiles(string photoFolder, int photoLibraryId)
 {
     Console.WriteLine("[START] - Scanning folder for images: "+ photoFolder);
     using var dbFiles = new CDatabaseImageDBsqliteContext();
@@ -310,7 +334,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
-                    AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
+                    await AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
                     filesAdded++;                    
                 }
                 catch (Exception ex)
@@ -346,8 +370,8 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
-                        CopyImageToMetadataHistory(imageId);
-                        UpdateImage(imageId, SHA1, batchID);
+                        await CopyImageToMetadataHistory(imageId);
+                        await UpdateImage(imageId, SHA1, batchID);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -367,8 +391,8 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     try
                     {
                         // Update file record
-                        CopyImageToMetadataHistory(imageId);
-                        UpdateImage(imageId, SHA1, batchID);
+                        await CopyImageToMetadataHistory(imageId);
+                        await UpdateImage(imageId, SHA1, batchID);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -387,7 +411,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                     try
                     {
                         // Update file record
-                        UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -468,19 +492,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
         }
 
         // Save changes to the database
-        int retryCount = 5;
-        while (retryCount-- > 0)
-        {
-            try
-            {
-                dbFiles.SaveChanges();
-                break;
-            }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-            {
-                Thread.Sleep(1000); // Wait and retry
-            }
-        }
+        await SaveChangesWithRetry(dbFiles);
 
         // Update the batch entry with the results
         using var dbFilesUpdate = new CDatabaseImageDBsqliteContext();
@@ -552,19 +564,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
                 jobbatch.Comment        = elapsedTimeComment;
 
                 // Save changes to the database
-                retryCount = 5;
-                while (retryCount-- > 0)
-                {
-                    try
-                    {
-                        dbFilesUpdate.SaveChanges();
-                        break;
-                    }
-                    catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-                    {
-                        Thread.Sleep(1000); // Wait and retry
-                    }
-                }
+                await SaveChangesWithRetry(dbFilesUpdate);
             }
 
             Console.WriteLine("");
@@ -573,7 +573,7 @@ void ScanFiles(string photoFolder, int photoLibraryId)
     }
 }
 
-async void UpdateImage(int imageId, string updatedSHA1, int batchID)
+async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
 {
     string specificFilePath     = String.Empty;
     string jsonMetadata         = String.Empty;
@@ -638,26 +638,14 @@ async void UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.Thumbnail         = imageThumbnail; 
 
             // Save changes to the database
-            int retryCount = 5;
-            while (retryCount-- > 0)
-            {
-                try
-                {
-                    dbFiles.SaveChanges();
-                    break;
-                }
-                catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-                {
-                    Thread.Sleep(1000); // Wait and retry
-                }
-            }
+            await SaveChangesWithRetry(dbFiles);
         }
     }
         
-    UpdateImageRecord(imageId, updatedSHA1, batchID);
+    await UpdateImageRecord(imageId, updatedSHA1, batchID);
 }
 
-async void AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1)
+async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1)
 {
     int imageId                 = 0;
     string jsonMetadata         = String.Empty;
@@ -736,27 +724,15 @@ async void AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 
             dbFiles.Add(newImage);
 
-            int retryCount = 5;
-            while (retryCount-- > 0)
-            {
-                try
-                {
-                    dbFiles.SaveChanges();
-                    break;
-                }
-                catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-                {
-                    Thread.Sleep(1000); // Wait and retry
-                }
-            }
+            await SaveChangesWithRetry(dbFiles);
 
             imageId = newImage.ImageId;
         }
 
-        UpdateImageRecord(imageId, SHA1, null);
+        await UpdateImageRecord(imageId, SHA1, null);
 }
 
-async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
+async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 {
         // Initialize variables for metadata extraction
         string jsonMetadata             = String.Empty;
@@ -1263,19 +1239,7 @@ async void UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 }
 
                 // Save the changes to the database
-                int retryCount = 5;
-                    while (retryCount-- > 0)
-                    {
-                        try
-                        {
-                            dbFilesUpdate.SaveChanges();
-                            break;
-                        }
-                        catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-                        {
-                            Thread.Sleep(1000); // Wait and retry
-                        }
-                    }            
+                await SaveChangesWithRetry(dbFilesUpdate);
                 }
             }  
            
@@ -1624,7 +1588,7 @@ static string getFileSHA1(string filepath)
     }
 }
 
-static void CopyImageToMetadataHistory(int imageId)
+static async Task CopyImageToMetadataHistory(int imageId)
 {
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -1652,19 +1616,7 @@ static void CopyImageToMetadataHistory(int imageId)
         dbFiles.MetadataHistories.Add(metadataHistory);
 
         // Save changes to the database
-        int retryCount = 5;
-        while (retryCount-- > 0)
-        {
-            try
-            {
-                dbFiles.SaveChanges();
-                break;
-            }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-            {
-                Thread.Sleep(1000); // Wait and retry
-            }
-        }
+        await SaveChangesWithRetry(dbFiles);
 
     }
 }
