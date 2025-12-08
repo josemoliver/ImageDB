@@ -143,7 +143,7 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 **When adding DB fields**:
 1. Update `database/ImageDB.sqlite.sql` (DDL)
 2. Regenerate EF model or manually add property to `console/Models/Image.cs`
-3. Add extraction logic in `UpdateImageRecord()` using `GetExiftoolValue()` pattern
+3. Add extraction logic in `UpdateImageRecord()` using `GetFirstNonEmptyExifValue()` pattern
 4. Preserve SQLite retry loops in save operations
 
 **When modifying ExifTool extraction**:
