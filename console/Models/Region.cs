@@ -26,4 +26,6 @@ public partial class Region
     public decimal? RegionAreaY { get; set; }
 
     public decimal? RegionAreaD { get; set; }
+
+    public byte[] RegionThumbnail { get; set; }
 }

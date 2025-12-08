@@ -89,6 +89,7 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.Property(e => e.Latitude).HasColumnType("NUMERIC");
             entity.Property(e => e.Longitude).HasColumnType("NUMERIC");
             entity.Property(e => e.Sha1).HasColumnName("SHA1");
+            entity.Property(e => e.Thumbnail).HasDefaultValueSql("NULL");
         });
 
         modelBuilder.Entity<Location>(entity =>
@@ -146,6 +147,7 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
             entity.Property(e => e.RegionAreaW).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaX).HasColumnType("NUMERIC");
             entity.Property(e => e.RegionAreaY).HasColumnType("NUMERIC");
+            entity.Property(e => e.RegionThumbnail).HasDefaultValueSql("NULL");
         });
 
         modelBuilder.Entity<RelationPeopleTag>(entity =>
