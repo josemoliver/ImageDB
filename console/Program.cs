@@ -732,45 +732,419 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
         await UpdateImageRecord(imageId, SHA1, null);
 }
 
+/// <summary>
+/// Extracts basic file properties from ExifTool JSON metadata.
+/// </summary>
+static (string createdDate, string modifiedDate, string filename, string sourceFile) ExtractFileProperties(JsonDocument doc)
+{
+    string fileCreatedDate = GetExiftoolValue(doc, "System:FileCreateDate");
+    string fileModifiedDate = GetExiftoolValue(doc, "System:FileModifyDate");
+    string filename = GetExiftoolValue(doc, "System:FileName");
+    string sourceFile = GetExiftoolValue(doc, "SourceFile").Replace("/", "\\");
+
+    // Format file datetime to desired format
+    fileCreatedDate = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd HH:mm:ss");
+    fileModifiedDate = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd HH:mm:ss");
+
+    return (fileCreatedDate, fileModifiedDate, filename, sourceFile);
+}
+
+/// <summary>
+/// Extracts title from metadata with MWG fallback precedence.
+/// </summary>
+static string ExtractTitle(JsonDocument doc)
+{
+    // No reference for this in the Metadata Working Group 2010 Spec, but it is a common tag used by many applications.
+    // IPTC Spec: https://iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#title
+    // SaveMetadata.org Ref: https://github.com/fhmwg/current-tags/blob/stage2-essentials/stage2-essentials.md
+    // Also reading legacy Windows XP Exif Title tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+    return GetExiftoolValue(doc, new string[] { "XMP-dc:Title", "IPTC:ObjectName", "IFD0:XPTitle" });
+}
+
+/// <summary>
+/// Extracts description from metadata with MWG fallback precedence.
+/// </summary>
+static string ExtractDescription(JsonDocument doc)
+{
+    //Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 36
+    // Also reading legacy Windows XP Exif Comment and Subject tags. These tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+    return GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription", "XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPSubject", "IFD0:XPComment", "IPTC:Headline", "XMP-acdsee:Caption" });
+}
+
+/// <summary>
+/// Extracts rating from metadata, normalizing percentage values if needed.
+/// </summary>
+static string ExtractRating(JsonDocument doc)
+{
+    //Rating - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
+    //The rating property allows the user to assign a fixed value (often displayed as "stars") to an image. Usually, 1 - 5 star ratings are used. In addition, some tools support negative rating values(such as - 1)
+    //that allows for marking "rejects". If ratings are not found in the principal XMP or EXIF values, this code also checks
+    //for RatingPercent in EXIF or Microsoft specific XMP tags.
+
+    string rating = NormalizeRatingNumber(GetExiftoolValue(doc, new string[] { "XMP-xmp:Rating", "IFD0:Rating" }));
+
+    if (rating == String.Empty)
+    {
+        rating = NormalizeRatingPercent(GetExiftoolValue(doc, new string[] { "IFD0:RatingPercent", "XMP-microsoft:RatingPercent" }));
+    }
+
+    return rating;
+}
+
+/// <summary>
+/// Extracts DateTimeTaken with MWG-compliant fallback cascade and timezone handling.
+/// </summary>
+static (string dateTime, string source, string timezone) ExtractDateTimeTaken(JsonDocument doc, string fileCreatedDate, string fileModifiedDate)
+{
+    //Get DateTimeTaken - Decending Priority - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
+    string dateTimeTaken = String.Empty;
+    string dateTimeTakenSource = String.Empty;
+    string tzDateTime = String.Empty;   // Value which may contain timezone
+
+    //XMP-photoshop:DateCreated (1st option - Preferred)
+    if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
+    {
+        dateTimeTaken = ConvertDateToNewFormat(propertyPhotoshopDate.GetString().Trim()) ?? "";
+        dateTimeTakenSource = "XMP-photoshop:DateCreated";
+        tzDateTime = propertyPhotoshopDate.GetString() ?? "";
+    }
+
+    //ExifIFD:DateTimeOriginal (2nd option)
+    if (dateTimeTaken == String.Empty)
+    {
+        if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
+        { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:DateTimeOriginal"; } //Exif DateTime does not contain time-zone information which is stored separately per Exif 2.32 spec. 
+    }
+
+    //ExifIFD:CreateDate (3rd option)
+    if (dateTimeTaken == String.Empty)
+    {
+        //ExifIFD:CreateDate
+        if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
+        { dateTimeTaken = ConvertDateToNewFormat(propertyCreateDate.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:CreateDate"; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
+    }
+
+    // XMP-exif:DateTimeOriginal (4th option)
+    if (dateTimeTaken == String.Empty)
+    {
+        // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal as some applications use this.
+        if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
+        {
+            dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? ""; dateTimeTakenSource = "XMP-exif:DateTimeOriginal";
+            if (tzDateTime == String.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
+        }
+    }
+
+    // IPTC Date and Time (5th option)
+    if (dateTimeTaken == String.Empty)
+    {
+        string iptcDate = GetExiftoolValue(doc, "IPTC:DateCreated");
+        string iptcTime = GetExiftoolValue(doc, "IPTC:TimeCreated");
+
+        if (iptcDate != String.Empty)
+        {
+            // Validate the date and time formats
+            string pattern = @"^([01]?[0-9]|2[0-3]):([0-5]?[0-9]):([0-5]?[0-9])([+-](0[0-9]|1[0-3]):([0-5][0-9]))?$";
+
+            string iptcDateTime;
+            if (Regex.IsMatch(iptcTime, pattern) == true)
+            {
+                iptcDateTime = iptcDate + " " + iptcTime; // Combine the IPTC date and time strings
+                tzDateTime = dateTimeTaken.Trim();        // IPTC may contain Time Zone
+            }
+            else
+            {
+                iptcDateTime = iptcDate + " 00:00:00"; // If no time available set to 00:00:00 (Ref https://iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#date-created)
+            }
+
+            iptcDateTime = ConvertDateToNewFormat(iptcDateTime.Trim());
+            dateTimeTaken = iptcDateTime;
+            if (dateTimeTaken != String.Empty)
+            {
+                dateTimeTakenSource = "IPTC:DateCreated + IPTC:TimeCreated";
+            }
+        }
+    }
+
+    // Select the oldest file system date between created or modified. (6th option)
+    if (dateTimeTaken == String.Empty)
+    {
+        // If all else fails to retrieve dateTime from the file metadata.
+        // Not part of the MWG spec - Use the file's system File Creation Date as a last resort for DateTimeTaken.
+
+        if (DateTime.Parse(fileCreatedDate) > DateTime.Parse(fileModifiedDate))
+        {
+            dateTimeTaken = fileModifiedDate;
+            dateTimeTakenSource = "File Modified Date";
+        }
+        else
+        {
+            dateTimeTaken = fileCreatedDate;
+            dateTimeTakenSource = "File Created Date";
+        }
+    }
+
+    // Extract TimeZone
+    // Get TimeZone - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 33
+    // Deviate from MWG standard, which was last updated in 2010 and prefer to populate TimeZone field the the OffsetTimeOriginal timezone property, if it exists. Many smartphone devices automatically set this field already per newer Exif 2.32 spec. 
+    string dateTimeTakenTimeZone = String.Empty;
+    string offsetTimeOriginal = GetExiftoolValue(doc, "ExifIFD:OffsetTimeOriginal");
+    if (offsetTimeOriginal != String.Empty)
+    {
+        dateTimeTakenTimeZone = offsetTimeOriginal;
+    }
+
+    // If the OffsetTimeOriginal property is not available, use the XMP DateTimeOriginal or DateTimeCreated property
+    if (dateTimeTakenTimeZone == String.Empty)
+    {
+        if (DateTimeOffset.TryParseExact(tzDateTime, "yyyy:MM:dd HH:mm:sszzz", null, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTimeOffset dateTimeOffset))
+        {
+            // Extract the timezone offset
+            TimeSpan timezoneOffset = dateTimeOffset.Offset;
+            dateTimeTakenTimeZone = timezoneOffset.ToString();
+        }
+    }
+
+    if (dateTimeTakenTimeZone != String.Empty)
+    {
+        dateTimeTakenTimeZone = FormatTimezone(dateTimeTakenTimeZone);
+    }
+
+    return (dateTimeTaken, dateTimeTakenSource, dateTimeTakenTimeZone);
+}
+
+/// <summary>
+/// Extracts GPS coordinates (latitude, longitude, altitude) from metadata.
+/// </summary>
+static (decimal? latitude, decimal? longitude, decimal? altitude) ExtractGeoCoordinates(JsonDocument doc)
+{
+    string stringLatitude = GetExiftoolValue(doc, "Composite:GPSLatitude");
+    string stringLongitude = GetExiftoolValue(doc, "Composite:GPSLongitude");
+    string stringAltitude = GetExiftoolValue(doc, "Composite:GPSAltitude");
+
+    decimal? latitude;
+    decimal? longitude;
+    decimal? altitude;
+
+    try
+    {
+        // Round values to 6 decimal places
+        stringLatitude = RoundCoordinate(stringLatitude, 6);
+        stringLongitude = RoundCoordinate(stringLongitude, 6);
+
+        latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
+        longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
+    }
+    catch
+    {
+        latitude = null;
+        longitude = null;
+    }
+
+    try
+    {
+        altitude = string.IsNullOrWhiteSpace(stringAltitude) ? null : decimal.Parse(stringAltitude, CultureInfo.InvariantCulture);
+    }
+    catch
+    {
+        altitude = null;
+    }
+
+    return (latitude, longitude, altitude);
+}
+
+/// <summary>
+/// Extracts location metadata (location, city, state, country, country code).
+/// </summary>
+static (string location, string city, string stateProvince, string country, string countryCode) ExtractLocationMetadata(JsonDocument doc)
+{
+    // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
+    // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
+    string[] exiftoolLocationTags = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
+    string[] exiftoolCityTags = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
+    string[] exiftoolStateProvinceTags = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
+    string[] exiftoolCountryTags = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
+    string[] exiftoolCountryCodeTags = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
+
+    string location = GetExiftoolValue(doc, exiftoolLocationTags);
+    string city = GetExiftoolValue(doc, exiftoolCityTags);
+    string stateProvince = GetExiftoolValue(doc, exiftoolStateProvinceTags);
+    string country = GetExiftoolValue(doc, exiftoolCountryTags);
+    string countryCode = GetExiftoolValue(doc, exiftoolCountryCodeTags);
+
+    return (location, city, stateProvince, country, countryCode);
+}
+
+/// <summary>
+/// Processes people tags from metadata and updates database relationships.
+/// </summary>
+static async Task ProcessPeopleTags(CDatabaseImageDBsqliteContext dbFiles, int imageID, JsonDocument doc)
+{
+    // MWG Region Names - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
+    // Microsoft People Tags - Ref: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-people-tagging
+    // IPTC Extension Person In Image - Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#person-shown-in-the-image
+
+    HashSet<string> peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage", "XMP-iptcExt:PersonInImageName" });
+
+    var servicePeopleTags = new PeopleTagService(dbFiles);
+    await servicePeopleTags.DeleteRelations(imageID); // Delete existing tags
+
+    foreach (var name in peopleTag)
+    {
+        await servicePeopleTags.AddPeopleTags(name, imageID);
+    }
+}
+
+/// <summary>
+/// Processes descriptive tags/keywords from metadata and updates database relationships.
+/// </summary>
+static async Task ProcessDescriptiveTags(CDatabaseImageDBsqliteContext dbFiles, int imageID, JsonDocument doc)
+{
+    // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
+    // Also reading legacy Windows XP Exif keyword tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
+    HashSet<string> descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
+
+    var serviceDescriptiveTags = new DescriptiveTagService(dbFiles);
+    await serviceDescriptiveTags.DeleteAllRelations(imageID); // Delete existing tags
+
+    foreach (var tag in descriptiveTag)
+    {
+        await serviceDescriptiveTags.AddTags(tag, imageID);
+    }
+}
+
+/// <summary>
+/// Processes MWG regions, collections, and persons from structured metadata.
+/// </summary>
+static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles, int imageID, string structJsonMetadata, string sourceFile, bool generateRegionThumbnails)
+{
+    // Delete existing regions and collections.
+    var mwgStruct = new StructService(dbFiles);
+    await mwgStruct.DeleteRegions(imageID);
+    await mwgStruct.DeleteCollections(imageID);
+    await mwgStruct.DeletePersons(imageID);
+
+    if (structJsonMetadata != String.Empty)
+    {
+        // Deserialize the JSON string into a MetadataStuct.Struct object
+        try
+        {
+            MetadataStuct.Struct structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (structMeta != null)
+            {
+                // Add Regions
+                try
+                {
+                    if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
+                    {
+                        foreach (var reg in structMeta.RegionInfo.RegionList)
+                        {
+                            byte[]? webpRegionBlob = null;
+
+                            if (generateRegionThumbnails == true)
+                            {
+                                webpRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                            }
+
+                            await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Handle the exception - Log the error message
+                    Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
+                    LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                }
+
+                // Add Collections
+                try
+                {
+                    if (structMeta?.Collections?.Any() == true)
+                    {
+                        foreach (var col in structMeta.Collections)
+                        {
+                            await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Handle the exception - Log the error message
+                    Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
+                    LogEntry(0, sourceFile, "[Unable to read MWG Collection] - " + ex.ToString());
+                }
+
+                // Add Persons
+                try
+                {
+                    if (structMeta?.PersonInImageWDetails?.Any() == true)
+                    {
+                        foreach (var per in structMeta.PersonInImageWDetails)
+                        {
+                            //If person name is not available, use empty string  
+                            string personName = per.PersonName ?? String.Empty;
+
+                            //Add each PersonId associated with the person
+                            foreach (var perId in per.PersonId)
+                            {
+                                await mwgStruct.AddPerson(imageID, personName, perId);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Handle the exception - Log the error message
+                    Console.WriteLine("[ERROR] - Failed to add person: " + ex.Message);
+                    LogEntry(0, sourceFile, "[Unable to read MWG Person] - " + ex.ToString());
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Handle the exception - Log the error message
+            Console.WriteLine("[ERROR] - Failed to deserialize struct metadata: " + ex.Message);
+            LogEntry(0, sourceFile, "[Unable to read MWG Region/Collection] - " + ex.ToString());
+        }
+    }
+}
+
+/// <summary>
+/// Processes IPTC location identifiers from metadata.
+/// </summary>
+static async Task ProcessLocationIdentifiers(CDatabaseImageDBsqliteContext dbFiles, int imageID, JsonDocument doc, string location)
+{
+    // The location identifier is a URI that can be used to reference the location in other systems.
+    // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#location-identifier
+    // Ref: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/
+    // When a new location identifier is found, it will be added to the database with the location name of the image.
+    // The location name in table Location can be modified by the user.
+
+    HashSet<string> locationCreatedIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
+    HashSet<string> locationShownIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationShownLocationId" });
+
+    var serviceLocations = new StructService(dbFiles);
+    await serviceLocations.DeleteLocations(imageID); // Delete existing location identifiers
+
+    // Add new location identifiers
+    foreach (var locationURI in locationCreatedIdentifier)
+    {
+        await serviceLocations.AddLocation(imageID, location, locationURI, "created");
+    }
+
+    foreach (var locationURI in locationShownIdentifier)
+    {
+        await serviceLocations.AddLocation(imageID, location, locationURI, "shown");
+    }
+}
+
 async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 {
-        // Initialize variables for metadata extraction
-        string jsonMetadata             = String.Empty;
-        string structJsonMetadata       = String.Empty;
-        string title                    = String.Empty;
-        string description              = String.Empty;
-        string rating                   = String.Empty;
-        string dateTimeTaken            = String.Empty;
-        string dateTimeTakenTimeZone    = String.Empty;
-        string dateTimeTakenSource      = String.Empty;
-        string deviceMake               = String.Empty;
-        string deviceModel              = String.Empty;
-        string device                   = String.Empty;
-        string location                 = String.Empty;
-        string city                     = String.Empty;
-        string stateProvince            = String.Empty;
-        string country                  = String.Empty;
-        string countryCode              = String.Empty;
-        string creator                  = String.Empty;
-        string copyright                = String.Empty;
-        string fileCreatedDate          = String.Empty;
-        string fileModifiedDate         = String.Empty;
-        string filename                 = String.Empty; 
-        string stringLatitude           = String.Empty; 
-        string stringLongitude          = String.Empty;
-        string stringAltitude           = String.Empty; 
-        string latitudeRef              = String.Empty;    
-        string longitudeRef             = String.Empty; 
-        string sourceFile               = String.Empty;
-      
-        decimal? latitude;
-        decimal? longitude;
-        decimal? altitude;
-
-        HashSet<string> peopleTag                   = new HashSet<string>();
-        HashSet<string> descriptiveTag              = new HashSet<string>();
-        HashSet<string> locationCreatedIdentifier   = new HashSet<string>();
-        HashSet<string> locationShownIdentifier     = new HashSet<string>();
+    // Initialize variables for metadata extraction
+    string jsonMetadata = String.Empty;
+    string structJsonMetadata = String.Empty;
 
     //Get metadata from db
     using var dbFiles = new CDatabaseImageDBsqliteContext();
@@ -816,435 +1190,89 @@ async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
     }
 
     if (jsonMetadata != String.Empty)
-    {             
-
+    {
         // Parse the JSON string dynamically into a JsonDocument
         using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
         {
-            //File Properties - Decending Priority
-            fileCreatedDate     = GetExiftoolValue(doc, "System:FileCreateDate");
-            fileModifiedDate    = GetExiftoolValue(doc, "System:FileModifyDate");
-            filename            = GetExiftoolValue(doc, "System:FileName");
-            sourceFile          = GetExiftoolValue(doc, "SourceFile").Replace("/","\\");
+            // Extract file properties
+            var (fileCreatedDate, fileModifiedDate, filename, sourceFile) = ExtractFileProperties(doc);
 
-            // Format file datetime to desired format
-            fileCreatedDate     = DateTime.ParseExact(fileCreatedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd HH:mm:ss");
-            fileModifiedDate    = DateTime.ParseExact(fileModifiedDate, "yyyy:MM:dd HH:mm:sszzz", CultureInfo.InvariantCulture).ToString("yyyy-MM-dd HH:mm:ss");
+            // Extract basic metadata fields
+            string title = ExtractTitle(doc);
+            string description = ExtractDescription(doc);
+            string rating = ExtractRating(doc);
 
-            // I. Image.Title 
+            // Extract date/time with timezone
+            var (dateTimeTaken, dateTimeTakenSource, dateTimeTakenTimeZone) = ExtractDateTimeTaken(doc, fileCreatedDate, fileModifiedDate);
 
-                // No reference for this in the Metadata Working Group 2010 Spec, but it is a common tag used by many applications.
-                // IPTC Spec: https://iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#title
-                // SaveMetadata.org Ref: https://github.com/fhmwg/current-tags/blob/stage2-essentials/stage2-essentials.md
-                // Also reading legacy Windows XP Exif Title tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-                title = GetExiftoolValue(doc, new string[] { "XMP-dc:Title", "IPTC:ObjectName", "IFD0:XPTitle" });
+            // Extract device information
+            string deviceMake = GetExiftoolValue(doc, "IFD0:Make");
+            string deviceModel = GetExiftoolValue(doc, "IFD0:Model");
+            string device = ImageDB.DeviceHelper.GetDevice(deviceMake, deviceModel);
 
-            // II. Image.Description 
+            // Extract geocoordinates
+            var (latitude, longitude, altitude) = ExtractGeoCoordinates(doc);
 
-                //Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 36
-                // Also reading legacy Windows XP Exif Comment and Subject tags. These tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-                description = GetExiftoolValue(doc, new string[] { "XMP-dc:Description", "IPTC:Caption-Abstract", "IFD0:ImageDescription","XMP-tiff:ImageDescription", "ExifIFD:UserComment", "IFD0:XPSubject", "IFD0:XPComment", "IPTC:Headline", "XMP-acdsee:Caption" });
+            // Extract location metadata
+            var (location, city, stateProvince, country, countryCode) = ExtractLocationMetadata(doc);
 
-            // III. Image.Rating 
+            // Extract creator and copyright
+            string creator = GetExiftoolValue(doc, new string[] { "XMP-dc:Creator", "IPTC:By-line", "IFD0:Artist", "XMP-tiff:Artist", "IFD0:XPAuthor" });
+            string copyright = GetExiftoolValue(doc, new string[] { "XMP-dc:Rights", "IPTC:CopyrightNotice", "IFD0:Copyright" });
 
-            //Rating - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 41
-            //The rating property allows the user to assign a fixed value (often displayed as "stars") to an image. Usually, 1 - 5 star ratings are used. In addition, some tools support negative rating values(such as - 1)
-            //that allows for marking "rejects". If ratings are not found in the principal XMP or EXIF values, this code also checks
-            //for RatingPercent in EXIF or Microsoft specific XMP tags.
+            // Process people tags
+            await ProcessPeopleTags(dbFiles, imageID, doc);
 
+            // Process MWG Regions, Collections, and Persons
+            await ProcessMWGStructuredData(dbFiles, imageID, structJsonMetadata, sourceFile, generateRegionThumbnails);
 
-                rating = NormalizeRatingNumber(GetExiftoolValue(doc, new string[] { "XMP-xmp:Rating", "IFD0:Rating" }));
+            // Process descriptive tags/keywords
+            await ProcessDescriptiveTags(dbFiles, imageID, doc);
 
-                if (rating == String.Empty)
-                {
-                    rating = NormalizeRatingPercent(GetExiftoolValue(doc, new string[] { "IFD0:RatingPercent", "XMP-microsoft:RatingPercent" }));
-                }               
+            // Process IPTC location identifiers
+            await ProcessLocationIdentifiers(dbFiles, imageID, doc, location);
 
-
-            // IV. Image.DateTimeTaken 
-
-            //Get DateTimeTaken - Decending Priority - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 37
-            string tzDateTime   = String.Empty;   // Value which may contain timezone
-
-                //XMP-photoshop:DateCreated (1st option - Preferred)
-                if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
-                { 
-                    dateTimeTaken = ConvertDateToNewFormat(propertyPhotoshopDate.GetString().Trim()) ?? "";
-                    dateTimeTakenSource = "XMP-photoshop:DateCreated";
-                    tzDateTime = propertyPhotoshopDate.GetString() ?? "";
-                }
-
-                //ExifIFD:DateTimeOriginal (2nd option)
-                if (dateTimeTaken == String.Empty)
-                {       
-                    if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
-                    { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:DateTimeOriginal"; } //Exif DateTime does not contain time-zone information which is stored separately per Exif 2.32 spec. 
-                }
-
-                //ExifIFD:CreateDate (3rd option)
-                if (dateTimeTaken == String.Empty)
-                {
-                    //ExifIFD:CreateDate
-                    if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
-                    { dateTimeTaken = ConvertDateToNewFormat(propertyCreateDate.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:CreateDate"; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
-                }
-
-                // XMP-exif:DateTimeOriginal (4th option)
-                if (dateTimeTaken == String.Empty)
-                {
-                    // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal as some applications use this.
-                    if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
-                    { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? ""; dateTimeTakenSource = "XMP-exif:DateTimeOriginal";
-                    if (tzDateTime== String.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
-                    }
-                }
-
-                // IPTC Date and Time (5th option)
-                if (dateTimeTaken == String.Empty)
-                {
-                    string iptcDate     = String.Empty;   // IPTC Date       
-                    string iptcTime     = String.Empty;   // IPTC Time
-                    string iptcDateTime = String.Empty;   // IPTC DateTime
-
-                    iptcDate = GetExiftoolValue(doc, "IPTC:DateCreated");
-                    iptcTime = GetExiftoolValue(doc, "IPTC:TimeCreated");
-
-                    if (iptcDate != String.Empty)
-                    {
-                        // Validate the date and time formats
-                        string pattern = @"^([01]?[0-9]|2[0-3]):([0-5]?[0-9]):([0-5]?[0-9])([+-](0[0-9]|1[0-3]):([0-5][0-9]))?$";
-
-                        if (Regex.IsMatch(iptcTime, pattern) == true)
-                        {
-                            iptcDateTime = iptcDate + " " + iptcTime; // Combine the IPTC date and time strings
-                            tzDateTime = dateTimeTaken.Trim();        // IPTC may contain Time Zone
-                        }
-                        else
-                        {
-                            iptcDateTime = iptcDate + " 00:00:00"; // If no time available set to 00:00:00 (Ref https://iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#date-created)
-                        }
-
-                        iptcDateTime = ConvertDateToNewFormat(iptcDateTime.Trim());
-                    }
-
-                    dateTimeTaken = iptcDateTime;
-                    if (dateTimeTaken != String.Empty)
-                    {
-                        dateTimeTakenSource = "IPTC:DateCreated + IPTC:TimeCreated";
-                    }
-                }      
-           
-                // Select the oldest file system date between created or modified. (6th option)
-                if (dateTimeTaken == String.Empty)
-                {
-                // If all else fails to retrieve dateTime from the file metadata.
-                // Not part of the MWG spec - Use the file's system File Creation Date as a last resort for DateTimeTaken.
-
-                    if (DateTime.Parse(fileCreatedDate) > DateTime.Parse(fileModifiedDate))
-                    {
-                        dateTimeTaken = fileModifiedDate;
-                        dateTimeTakenSource = "File Modified Date";
-                    }
-                    else
-                    {
-                        dateTimeTaken = fileCreatedDate;
-                        dateTimeTakenSource = "File Created Date";
-                    }
-                }    
-
-
-            // V. Image.TimeZone
-
-                // Get TimeZone - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 33
-                // Deviate from MWG standard, which was last updated in 2010 and prefer to populate TimeZone field the the OffsetTimeOriginal timezone property, if it exists. Many smartphone devices automatically set this field already per newer Exif 2.32 spec. 
-                string offsetTimeOriginal = GetExiftoolValue(doc, "ExifIFD:OffsetTimeOriginal");
-                if (offsetTimeOriginal!=String.Empty)
-                {
-                    dateTimeTakenTimeZone = offsetTimeOriginal;
-                }
-
-                // If the OffsetTimeOriginal property is not available, use the XMP DateTimeOriginal or DateTimeCreated property
-                if (dateTimeTakenTimeZone == String.Empty)
-                {
-                    if (DateTimeOffset.TryParseExact(tzDateTime, "yyyy:MM:dd HH:mm:sszzz", null, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTimeOffset dateTimeOffset))
-                    {
-                        // Extract the timezone offset
-                        TimeSpan timezoneOffset = dateTimeOffset.Offset;
-                        dateTimeTakenTimeZone = timezoneOffset.ToString();
-                    }
-                }
-
-                if (dateTimeTakenTimeZone != String.Empty)
-                {
-                    dateTimeTakenTimeZone = FormatTimezone(dateTimeTakenTimeZone);
-                }
-
-
-            // VI. Image.Device
-
-                // Get Device Model and Make (Exif Values)
-                deviceMake  = GetExiftoolValue(doc,"IFD0:Make");
-                deviceModel = GetExiftoolValue(doc,"IFD0:Model");
-
-                // How the Make and Model values differ by device manufacturers. For the database field of "Device", we will use the device name as defined in the ImageDB.DeviceHelper.GetDevice method.
-                // Combining Make and Model into a single field "Device" for presentation purposes.
-                device = ImageDB.DeviceHelper.GetDevice(deviceMake, deviceModel);
-
-            // VII. Geocoordinates - Image.Latitude, Image.Longitude, and Image.Altitude
-                stringLatitude  = GetExiftoolValue(doc, "Composite:GPSLatitude");
-                stringLongitude = GetExiftoolValue(doc, "Composite:GPSLongitude");
-                stringAltitude  = GetExiftoolValue(doc, "Composite:GPSAltitude");
-
-                try
-                {
-                    // Round values to 6 decimal places
-                    stringLatitude  = RoundCoordinate(stringLatitude, 6);
-                    stringLongitude = RoundCoordinate(stringLongitude, 6);
-
-                    latitude    = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
-                    longitude   = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
-                }
-                catch
-                {
-                    latitude    = null;
-                    longitude   = null;
-                }
-
-                try
-                {
-                    altitude = string.IsNullOrWhiteSpace(stringAltitude) ? null : decimal.Parse(stringAltitude, CultureInfo.InvariantCulture);
-                }
-                catch 
-                {
-                    altitude = null;
-                }
-
-
-            // VIII. Geotags
-
-                // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
-                // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
-                string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
-                string[] exiftoolCityTags           = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
-                string[] exiftoolStateProvinceTags  = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
-                string[] exiftoolCountryTags        = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
-                string[] exiftoolCountryCodeTags    = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
-
-                location        = GetExiftoolValue(doc, exiftoolLocationTags);
-                city            = GetExiftoolValue(doc, exiftoolCityTags);
-                stateProvince   = GetExiftoolValue(doc, exiftoolStateProvinceTags);
-                country         = GetExiftoolValue(doc, exiftoolCountryTags);
-                countryCode     = GetExiftoolValue(doc, exiftoolCountryCodeTags);
-
-            // IX. Get Creator - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 43
-            
-                // Also reading legacy Windows Exif XPAuthor value. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-                creator = GetExiftoolValue(doc, new string[] { "XMP-dc:Creator", "IPTC:By-line", "IFD0:Artist", "XMP-tiff:Artist", "IFD0:XPAuthor" });
-
-            // X.  Get Copyright - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 42
-                
-                copyright = GetExiftoolValue(doc, new string[] { "XMP-dc:Rights", "IPTC:CopyrightNotice", "IFD0:Copyright" });
-
-
-            // XI. Get People tags/names - Support various schemas for people tags
-
-                // MWG Region Names - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
-                // Microsoft People Tags - Ref: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-people-tagging
-                // IPTC Extension Person In Image - Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#person-shown-in-the-image
-
-                peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage", "XMP-iptcExt:PersonInImageName" });
-
-                var servicePeopleTags = new PeopleTagService(dbFiles);
-
-                await servicePeopleTags.DeleteRelations(imageID); // Delete existing tags
-
-                foreach (var name in peopleTag)
-                {         
-                    await servicePeopleTags.AddPeopleTags(name, imageID);
-                }
-
-
-
-            // XII. Get MWG Regions and Collections - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
-
-            // Delete existing regions and collections.
-            var mwgStruct = new StructService(dbFiles);
-            await mwgStruct.DeleteRegions(imageID);
-            await mwgStruct.DeleteCollections(imageID);
-            await mwgStruct.DeletePersons(imageID);
-
-            if (structJsonMetadata != String.Empty)
-            {
-                // Deserialize the JSON string into a MetadataStuct.Struct object
-                try
-                {
-                    MetadataStuct.Struct structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                    if (structMeta != null)
-                    {
-                        // Add Regions
-                        try
-                        {
-                            if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
-                            {
-                               foreach (var reg in structMeta.RegionInfo.RegionList)
-                                {
-                                    byte[]? webpRegionBlob = null;
-
-                                    if (generateRegionThumbnails == true)
-                                    {
-                                        webpRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
-                                    }
-
-                                    await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob);
-                                 }
-                                
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Handle the exception - Log the error message
-                            Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
-                            LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
-                        }
-
-                        // Add Collections
-                        try
-                        {
-                            if (structMeta?.Collections?.Any() == true)
-                            {
-                                foreach (var col in structMeta.Collections)
-                                {
-                                    await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Handle the exception - Log the error message
-                            Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
-                            LogEntry(0, sourceFile, "[Unable to read MWG Collection] - " + ex.ToString());
-                        }
-
-                        // Add Persons
-                        try
-                        {
-                            if (structMeta?.PersonInImageWDetails?.Any() == true)
-                            {
-                                foreach (var per in structMeta.PersonInImageWDetails)
-                                {
-                                    //If person name is not available, use empty string  
-                                    string personName = per.PersonName ?? String.Empty;
-
-                                    //Add each PersonId associated with the person
-                                    foreach (var perId in per.PersonId)
-                                    {
-                                        await mwgStruct.AddPerson(imageID, personName, perId);
-                                    }
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Handle the exception - Log the error message
-                            Console.WriteLine("[ERROR] - Failed to add collection: " + ex.Message);
-                            LogEntry(0, sourceFile, "[Unable to read MWG Collection] - " + ex.ToString());
-                        }
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // Handle the exception - Log the error message
-                    Console.WriteLine("[ERROR] - Failed to deserialize struct metadata: " + ex.Message);
-                    LogEntry(0, sourceFile, "[Unable to read MWG Region/Collection] - " + ex.ToString());
-                }
-            }
-
-            // XIII. Get Descriptive tags/keywords
-
-            // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
-            // Also reading legacy Windows XP Exif keyword tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-            descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
-
-                var serviceDescriptiveTags = new DescriptiveTagService(dbFiles);
-
-            await serviceDescriptiveTags.DeleteAllRelations(imageID); // Delete existing tags
-
-            foreach (var tag in descriptiveTag)
-            {
-                    await serviceDescriptiveTags.AddTags(tag, imageID);
-            }
-
-            // XIV. Get IPTC Location Identifiers - Introduced by IPTC in the 2014 IPTC Extension Standard.
-
-                // The location identifier is a URI that can be used to reference the location in other systems.
-                // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#location-identifier
-                // Ref: https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/
-                // When a new location identifier is found, it will be added to the database with the location name of the image.
-                // The location name in table Location can be modified by the user.
-
-                locationCreatedIdentifier = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationCreatedLocationId" });
-                locationShownIdentifier   = GetExiftoolListValues(doc, new string[] { "XMP-iptcExt:LocationShownLocationId" });
-
-                var serviceLocations = new StructService(dbFiles);
-
-                await serviceLocations.DeleteLocations(imageID); // Delete existing location identifiers
-
-                // Add new location identifiers
-                foreach (var locationURI in locationCreatedIdentifier)
-                {
-                       await serviceLocations.AddLocation(imageID,location,locationURI,"created");
-                }
-
-                foreach (var locationURI in locationShownIdentifier)
-                {
-                       await serviceLocations.AddLocation(imageID, location, locationURI, "shown");
-                }
-
-        }
-
+            // Update the image record with extracted metadata
             using var dbFilesUpdate = new CDatabaseImageDBsqliteContext();
             {
                 var image = dbFilesUpdate.Images.FirstOrDefault(img => img.ImageId == imageID);
 
                 if (image != null)
                 {
-                // Update the Date field (assuming Date is a DateTime property)
-                image.Title                     = title;
-                image.Description               = description;
-                image.Rating                    = rating;
-                image.DateTimeTaken             = dateTimeTaken;
-                image.DateTimeTakenTimeZone     = dateTimeTakenTimeZone;
-                image.Device                    = device;
-                image.Latitude                  = latitude;
-                image.Longitude                 = longitude;
-                image.Altitude                  = altitude;
-                image.Location                  = location;
-                image.City                      = city; 
-                image.StateProvince             = stateProvince;
-                image.Country                   = country;
-                image.CountryCode               = countryCode;
-                image.Creator                   = creator;
-                image.Copyright                 = copyright;
-                image.FileCreatedDate           = fileCreatedDate;
-                image.FileModifiedDate          = fileModifiedDate;
-                image.DateTimeTakenSource       = dateTimeTakenSource;
+                    // Update the Date field (assuming Date is a DateTime property)
+                    image.Title = title;
+                    image.Description = description;
+                    image.Rating = rating;
+                    image.DateTimeTaken = dateTimeTaken;
+                    image.DateTimeTakenTimeZone = dateTimeTakenTimeZone;
+                    image.Device = device;
+                    image.Latitude = latitude;
+                    image.Longitude = longitude;
+                    image.Altitude = altitude;
+                    image.Location = location;
+                    image.City = city;
+                    image.StateProvince = stateProvince;
+                    image.Country = country;
+                    image.CountryCode = countryCode;
+                    image.Creator = creator;
+                    image.Copyright = copyright;
+                    image.FileCreatedDate = fileCreatedDate;
+                    image.FileModifiedDate = fileModifiedDate;
+                    image.DateTimeTakenSource = dateTimeTakenSource;
 
-                // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
-                if (updatedSHA1 != String.Empty)
-                {
-                    image.Sha1              = updatedSHA1;
-                    image.ModifiedBatchId   = batchId;
-                }
+                    // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
+                    if (updatedSHA1 != String.Empty)
+                    {
+                        image.Sha1 = updatedSHA1;
+                        image.ModifiedBatchId = batchId;
+                    }
 
-                // Save the changes to the database
-                await SaveChangesWithRetry(dbFilesUpdate);
+                    // Save the changes to the database
+                    await SaveChangesWithRetry(dbFilesUpdate);
                 }
-            }  
-           
+            }
+        }
     }
-        
 }
 
 // Normalize rating number to integer between -1 and 5
