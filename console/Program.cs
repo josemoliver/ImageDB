@@ -18,6 +18,11 @@ using System.Text.RegularExpressions;
 // Author: José Oliver-Didier
 // License: MIT
 
+// Constants for configuration values
+const int SqliteRetryCount = 5;
+const int SqliteRetryDelayMs = 1000;
+const int GpsCoordinatePrecision = 6;
+const int FileReadBufferSize = 8192;
 
 var rootCommand = new RootCommand
 {
@@ -169,13 +174,12 @@ else
 
 /// <summary>
 /// Saves changes to the database with SQLite lock retry logic.
-/// Retries up to 5 times with 1 second delay between attempts.
+/// Retries up to SqliteRetryCount times with SqliteRetryDelayMs delay between attempts.
 /// </summary>
 /// <param name="context">The database context to save</param>
 static async Task SaveChangesWithRetry(DbContext context)
 {
-    const int maxRetries = 5;
-    int retryCount = maxRetries;
+    int retryCount = SqliteRetryCount;
     
     while (retryCount-- > 0)
     {
@@ -187,7 +191,7 @@ static async Task SaveChangesWithRetry(DbContext context)
         catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
         {
             if (retryCount == 0) throw;
-            await Task.Delay(1000);
+            await Task.Delay(SqliteRetryDelayMs);
         }
     }
 }
@@ -928,9 +932,9 @@ static (decimal? latitude, decimal? longitude, decimal? altitude) ExtractGeoCoor
 
     try
     {
-        // Round values to 6 decimal places
-        stringLatitude = RoundCoordinate(stringLatitude, 6);
-        stringLongitude = RoundCoordinate(stringLongitude, 6);
+        // Round values to GpsCoordinatePrecision decimal places
+        stringLatitude = RoundCoordinate(stringLatitude, GpsCoordinatePrecision);
+        stringLongitude = RoundCoordinate(stringLongitude, GpsCoordinatePrecision);
 
         latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
         longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
@@ -1172,20 +1176,7 @@ async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
         if (tagsFound == true)
         {
-            int retryCount = 5;
-
-            while (retryCount-- > 0)
-            {
-                try
-                {
-                    dbFiles.SaveChanges();
-                    break;
-                }
-                catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
-                {
-                    Thread.Sleep(1000); // Wait and retry
-                }
-            }
+            await SaveChangesWithRetry(dbFiles);
         }
     }
 
@@ -1606,9 +1597,7 @@ static string NormalizePathCase(string folderPath)
 
 static string getFileSHA1(string filepath)
 {
-    const int bufferSize = 8192; // 8KB buffer size
-
-    using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize))
+    using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, FileReadBufferSize))
     using (SHA1 sha = SHA1.Create())
     {
         byte[] checksum = sha.ComputeHash(stream);
