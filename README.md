@@ -143,7 +143,7 @@ The views are meant to assist in your metadata inspection and analysis. For exam
 ### **Collection Analysis & Statistics**
 - **Camera Equipment Usage** - Query `vDevicesCount` to analyze which cameras captured the most photos, including date ranges and file sizes. Use `vLensInfo` for detailed lens usage statistics.
 - **Photography Timeline** - Use `vMonthlyPhotosTaken` to visualize photo production over time, identify gaps in your archive, or track shooting patterns.
-- **Library Overview** - The `vPhotoLibraries` view provides comprehensive statistics per photo library: image counts, unique devices, creators, albums, and tag usage.
+- **Library Overview** - The `vPhotoLibraryMetadataHealth` view returns per-library columns: `PhotoLibraryId`, `Folder`, `ImageCount`, `AlbumCount`, `TotalFilesize`, `UniqueDeviceCount`, `DistinctCreatorCount`, `PeopleTaggedImageCount`, `KeywordedImageCount`, `PercentWithTitle`, `PercentWithDescription`, `PercentWithLocation`, `PercentWithKeywords`, `PercentWithPeople`, `AvgMetadataScore_0to5`, `OldestPhoto`, `NewestPhoto`, `DuplicateFilenameGroups`.
 - **Album Analysis** - Use `vAlbums` to see date ranges, file counts, and storage size for each album/folder in your collection.
 - **Rating Distribution** - Query `vRatingCounts` to understand how you've rated your collection (useful for identifying your best work or unrated images).
 

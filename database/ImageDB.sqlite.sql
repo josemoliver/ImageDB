@@ -716,31 +716,147 @@ GROUP BY
 DROP VIEW IF EXISTS "vPhotoDates";
 CREATE VIEW vPhotoDates AS
 SELECT Filepath,DateTimeTaken, DateTimeTakenTimeZone,json_extract(Metadata, '$.ExifIFD:DateTimeOriginal') AS Exif_DateTimeOriginal,json_extract(Metadata, '$.ExifIFD:CreateDate') AS Exif_CreateDate, json_extract(Metadata, '$.IPTC:DateCreated') AS IPTC_DateCreated,json_extract(Metadata, '$.IPTC:TimeCreated') AS IPTC_TimeCreated, json_extract(Metadata, '$.XMP-exif:DateTimeOriginal') AS XMPexif_DateTimeOriginal, json_extract(Metadata, '$.XMP-photoshop:DateCreated') AS XMPphotoshop_DateCreated, Metadata FROM Image;
-DROP VIEW IF EXISTS "vPhotoLibraries";
-CREATE VIEW vPhotoLibraries AS
+DROP VIEW IF EXISTS "vPhotoLibraryMetadataHealth";
+CREATE VIEW vPhotoLibraryMetadataHealth AS
+WITH
+-- 1) Keyword usage (non-empty only)
+KeywordCount AS (
+    SELECT 
+        ImageId,
+        COUNT(*) AS HasKeyword
+    FROM relationTag
+    GROUP BY ImageId
+),
+
+-- 2) People tag usage
+PeopleCount AS (
+    SELECT 
+        ImageId,
+        COUNT(*) AS HasPeople
+    FROM relationPeopleTag
+    GROUP BY ImageId
+),
+
+-- 3) Duplicate filenames per library
+DuplicateFilenames AS (
+    SELECT 
+        PhotoLibraryId,
+        LOWER(Filename) AS Filename,
+        COUNT(*) AS Cnt
+    FROM Image
+    GROUP BY PhotoLibraryId, LOWER(Filename)
+    HAVING COUNT(*) > 1
+),
+
+-- 4) Per-image metadata completeness score (0–5)
+PerImageCompleteness AS (
+    SELECT
+        i.ImageId,
+        i.PhotoLibraryId,
+        i.DateTimeTakenTimeZone,
+
+        -- Title must be non-null and non-empty
+        CASE WHEN i.Title IS NOT NULL AND TRIM(i.Title) <> '' THEN 1 ELSE 0 END AS HasTitle,
+
+        -- Description must be non-null and non-empty
+        CASE WHEN i.Description IS NOT NULL AND TRIM(i.Description) <> '' THEN 1 ELSE 0 END AS HasDescription,
+
+        -- Location metadata: any of these must be non-empty
+        CASE 
+            WHEN (i.Location       IS NOT NULL AND TRIM(i.Location)       <> '')
+              OR (i.City          IS NOT NULL AND TRIM(i.City)          <> '')
+              OR (i.StateProvince IS NOT NULL AND TRIM(i.StateProvince) <> '')
+              OR (i.Country       IS NOT NULL AND TRIM(i.Country)       <> '')
+              OR (i.CountryCode   IS NOT NULL AND TRIM(i.CountryCode)   <> '')
+            THEN 1 ELSE 0
+        END AS HasLocation,
+
+        -- Keywords present
+        CASE WHEN kc.HasKeyword IS NOT NULL AND kc.HasKeyword > 0 THEN 1 ELSE 0 END AS HasKeywords,
+
+        -- People metadata present
+        CASE WHEN pc.HasPeople IS NOT NULL AND pc.HasPeople > 0 THEN 1 ELSE 0 END AS HasPeople,
+
+        -- Metadata completeness score (0–5)
+        (
+            (CASE WHEN i.Title        IS NOT NULL AND TRIM(i.Title)        <> '' THEN 1 ELSE 0 END) +
+            (CASE WHEN i.Description  IS NOT NULL AND TRIM(i.Description)  <> '' THEN 1 ELSE 0 END) +
+            (CASE WHEN (i.Location IS NOT NULL       AND TRIM(i.Location)       <> '')
+                       OR (i.City IS NOT NULL        AND TRIM(i.City)          <> '')
+                       OR (i.StateProvince IS NOT NULL AND TRIM(i.StateProvince) <> '')
+                       OR (i.Country IS NOT NULL     AND TRIM(i.Country)       <> '')
+                       OR (i.CountryCode IS NOT NULL AND TRIM(i.CountryCode)   <> '')
+                  THEN 1 ELSE 0 END) +
+            (CASE WHEN kc.HasKeyword IS NOT NULL AND kc.HasKeyword > 0 THEN 1 ELSE 0 END) +
+            (CASE WHEN pc.HasPeople  IS NOT NULL AND pc.HasPeople  > 0 THEN 1 ELSE 0 END)
+        ) AS MetadataScore
+
+    FROM Image i
+    LEFT JOIN KeywordCount kc ON kc.ImageId = i.ImageId
+    LEFT JOIN PeopleCount  pc ON pc.ImageId = i.ImageId
+),
+
+-- 5) Library-level aggregated completeness
+LibraryCompleteness AS (
+    SELECT
+        PhotoLibraryId,
+
+        AVG(HasTitle)      AS PctWithTitle,
+        AVG(HasDescription) AS PctWithDescription,
+        AVG(HasLocation)   AS PctWithLocation,
+        AVG(HasKeywords)   AS PctWithKeywords,
+        AVG(HasPeople)     AS PctWithPeople,
+
+        AVG(MetadataScore) AS AvgScore_0to5
+    FROM PerImageCompleteness
+    GROUP BY PhotoLibraryId
+)
+
 SELECT 
     p.PhotoLibraryId,
-	p.Folder,
+    p.Folder,
+
     COUNT(i.ImageId) AS ImageCount,
-	COUNT(DISTINCT i.Album) AS AlbumCount,
+    COUNT(DISTINCT i.Album) AS AlbumCount,
     IFNULL(SUM(i.Filesize), 0) AS TotalFilesize,
     COUNT(DISTINCT i.Device) AS UniqueDeviceCount,
-	COUNT(DISTINCT i.Creator) AS DistinctCreatorCount,
-    IFNULL(COUNT(rpt.PeopleTagId), 0) AS PeopleTagCount,
-	IFNULL(COUNT(rt.TagId), 0) AS DescriptiveTagCount
+    COUNT(DISTINCT i.Creator) AS DistinctCreatorCount,
+
+    -- People / keyword counts
+    SUM(CASE WHEN pc.HasPeople   > 0 THEN 1 ELSE 0 END) AS PeopleTaggedImageCount,
+    SUM(CASE WHEN kc.HasKeyword > 0 THEN 1 ELSE 0 END) AS KeywordedImageCount,
+
+    -- Completion percentages
+    ROUND(lc.PctWithTitle       * 100.0, 2) AS PercentWithTitle,
+    ROUND(lc.PctWithDescription * 100.0, 2) AS PercentWithDescription,
+    ROUND(lc.PctWithLocation    * 100.0, 2) AS PercentWithLocation,
+    ROUND(lc.PctWithKeywords    * 100.0, 2) AS PercentWithKeywords,
+    ROUND(lc.PctWithPeople      * 100.0, 2) AS PercentWithPeople,
+
+    -- Average metadata completeness score (0–5)
+    ROUND(lc.AvgScore_0to5, 2) AS AvgMetadataScore_0to5,
+
+    -- Oldest / newest DateTimeTaken
+    MIN(i.DateTimeTaken) AS OldestPhoto,
+    MAX(i.DateTimeTaken) AS NewestPhoto,
+
+    -- Duplicate filename groups within library
+    (
+        SELECT COUNT(*) 
+        FROM DuplicateFilenames df
+        WHERE df.PhotoLibraryId = p.PhotoLibraryId
+    ) AS DuplicateFilenameGroups
+
 FROM 
     PhotoLibrary p
-LEFT JOIN 
-    Image i 
-    ON p.PhotoLibraryId = i.PhotoLibraryId
-LEFT JOIN 
-    relationPeopleTag rpt 
-    ON i.ImageId = rpt.ImageId
-LEFT JOIN 
-    relationTag rt 
-    ON i.ImageId = rt.ImageId
+LEFT JOIN Image i ON p.PhotoLibraryId = i.PhotoLibraryId
+LEFT JOIN KeywordCount kc ON kc.ImageId = i.ImageId
+LEFT JOIN PeopleCount pc ON pc.ImageId = i.ImageId
+LEFT JOIN LibraryCompleteness lc ON lc.PhotoLibraryId = p.PhotoLibraryId
+
 GROUP BY 
     p.PhotoLibraryId
+
 ORDER BY 
     p.PhotoLibraryId;
 DROP VIEW IF EXISTS "vRatingCounts";
