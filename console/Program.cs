@@ -623,7 +623,6 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 // File was not found in db, add it
                 // Use pre-computed SHA1 from cache (already computed in parallel)
                 SHA1 = sha1Cache.TryGetValue(imageFiles[i].FilePath, out var cachedHash) ? cachedHash : getFileSHA1(imageFiles[i].FilePath);
-                Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
                     await AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1, thumbnailCache, pixelHashCache);
@@ -660,7 +659,6 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 if ((SHA1!=imageSHA1)&&(dateScan == false))
                 {
                     // File has been modified, update it
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
                         await CopyImageToMetadataHistory(imageId);
@@ -679,7 +677,6 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 {
                     // File has been modified, update it
                     SHA1 = getFileSHA1(imageFiles[i].FilePath);
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
                         // Update file record
@@ -698,7 +695,6 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 else if (reloadMetadata == true)
                 {
                     // File has been modified, update it
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i]);
                     try
                     {
                         // Update file record
@@ -726,7 +722,6 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                     else
                     {
                         // File is unchanged, skip it
-                        Console.WriteLine("[SKIP] - " + imageFiles[i].FilePath);
                         filesSkipped++;
                     }
                 }
@@ -1145,12 +1140,12 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
 
         if (DateTime.Parse(fileCreatedDate) > DateTime.Parse(fileModifiedDate))
         {
-            dateTimeTaken = fileModifiedDate;
+            dateTimeTaken       = fileModifiedDate;
             dateTimeTakenSource = "File Modified Date";
         }
         else
         {
-            dateTimeTaken = fileCreatedDate;
+            dateTimeTaken       = fileCreatedDate;
             dateTimeTakenSource = "File Created Date";
         }
     }
@@ -1189,9 +1184,9 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
 /// </summary>
 static (decimal? latitude, decimal? longitude, decimal? altitude) ExtractGeoCoordinates(JsonDocument doc)
 {
-    string stringLatitude = GetFirstNonEmptyExifValue(doc, "Composite:GPSLatitude");
-    string stringLongitude = GetFirstNonEmptyExifValue(doc, "Composite:GPSLongitude");
-    string stringAltitude = GetFirstNonEmptyExifValue(doc, "Composite:GPSAltitude");
+    string stringLatitude   = GetFirstNonEmptyExifValue(doc, "Composite:GPSLatitude");
+    string stringLongitude  = GetFirstNonEmptyExifValue(doc, "Composite:GPSLongitude");
+    string stringAltitude   = GetFirstNonEmptyExifValue(doc, "Composite:GPSAltitude");
 
     decimal? latitude;
     decimal? longitude;
@@ -1200,17 +1195,17 @@ static (decimal? latitude, decimal? longitude, decimal? altitude) ExtractGeoCoor
     try
     {
         // Round values to GpsCoordinatePrecision decimal places
-        stringLatitude = RoundCoordinate(stringLatitude, GpsCoordinatePrecision);
+        stringLatitude  = RoundCoordinate(stringLatitude, GpsCoordinatePrecision);
         stringLongitude = RoundCoordinate(stringLongitude, GpsCoordinatePrecision);
 
-        latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
-        longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
+        latitude    = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
+        longitude   = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
     }
     catch (FormatException)
     {
         // Invalid GPS coordinate format - set to null
-        latitude = null;
-        longitude = null;
+        latitude    = null;
+        longitude   = null;
     }
 
     try
@@ -1233,17 +1228,17 @@ static (string location, string city, string stateProvince, string country, stri
 {
     // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
     // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
-    string[] exiftoolLocationTags = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
-    string[] exiftoolCityTags = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
-    string[] exiftoolStateProvinceTags = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
-    string[] exiftoolCountryTags = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
-    string[] exiftoolCountryCodeTags = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
+    string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
+    string[] exiftoolCityTags           = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
+    string[] exiftoolStateProvinceTags  = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
+    string[] exiftoolCountryTags        = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
+    string[] exiftoolCountryCodeTags    = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
 
-    string location = GetFirstNonEmptyExifValue(doc, exiftoolLocationTags);
-    string city = GetFirstNonEmptyExifValue(doc, exiftoolCityTags);
-    string stateProvince = GetFirstNonEmptyExifValue(doc, exiftoolStateProvinceTags);
-    string country = GetFirstNonEmptyExifValue(doc, exiftoolCountryTags);
-    string countryCode = GetFirstNonEmptyExifValue(doc, exiftoolCountryCodeTags);
+    string location         = GetFirstNonEmptyExifValue(doc, exiftoolLocationTags);
+    string city             = GetFirstNonEmptyExifValue(doc, exiftoolCityTags);
+    string stateProvince    = GetFirstNonEmptyExifValue(doc, exiftoolStateProvinceTags);
+    string country          = GetFirstNonEmptyExifValue(doc, exiftoolCountryTags);
+    string countryCode      = GetFirstNonEmptyExifValue(doc, exiftoolCountryCodeTags);
 
     return (location, city, stateProvince, country, countryCode);
 }
