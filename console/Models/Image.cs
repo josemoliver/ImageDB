@@ -74,4 +74,6 @@ public partial class Image
     public string DateTimeTakenSource { get; set; }
 
     public byte[] Thumbnail { get; set; }
+
+    public string PixelHash { get; set; }
 }

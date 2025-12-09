@@ -609,34 +609,28 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
             string fileDateCreated  = fileInfo.CreationTime.ToString("yyyy-MM-dd HH:mm:ss");
             string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
 
-            // Generate thumbnail
-            byte[]? imageThumbnail = null;
-
-            if (generateThumbnails == true)
+            // Smart thumbnail regeneration: only if missing or when we detect changes
+            byte[]? imageThumbnail = image.Thumbnail; // Preserve existing by default
+            string currentPixelHash = image.PixelHash ?? string.Empty;
+            
+            if (generateThumbnails && image.Thumbnail == null)
             {
+                // Generate thumbnail for first time (also computes pixel hash)
                 try
                 {
-                    imageThumbnail = ImageToThumbnailBlob(specificFilePath);
-                    if (imageThumbnail != null)
-                    {
-                        Console.WriteLine($"[DEBUG] Thumbnail generated for {specificFilePath}: {imageThumbnail.Length} bytes");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[DEBUG] Thumbnail is NULL for {specificFilePath}");
-                    }
+                    var (thumb, hash) = ImageToThumbnailBlobWithHash(specificFilePath);
+                    imageThumbnail = thumb;
+                    currentPixelHash = hash;
+                    Console.WriteLine($"[THUMBNAIL] Generated for first time: {specificFilePath}");
                 }
                 catch (Exception ex)
                 {
-                    // If thumbnail generation fails, log and set to null
                     Console.WriteLine($"Warning: Failed to generate thumbnail for {specificFilePath}: {ex.Message}");
                     imageThumbnail = null;
                 }
             }
-            else
-            {
-                Console.WriteLine($"[DEBUG] Thumbnail generation is DISABLED (generateThumbnails={generateThumbnails})");
-            }
+            // Note: For existing thumbnails, we preserve them on metadata-only updates
+            // User can force regeneration by deleting thumbnails (SET Thumbnail=NULL)
 
             // Update the fields with new values
             image.Filesize          = fileSize;
@@ -645,7 +639,8 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.Metadata          = jsonMetadata;
             image.StuctMetadata     = structJsonMetadata;
             image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            image.Thumbnail         = imageThumbnail; 
+            image.Thumbnail         = imageThumbnail;
+            image.PixelHash         = currentPixelHash; // Store for future comparison 
 
             // Save changes to the database
             await SaveChangesWithRetry(dbFiles);
@@ -696,32 +691,23 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
         }
 
         // Generate thumbnail
+        // Generate thumbnail for new images (also computes pixel hash efficiently)
         byte[]? imageThumbnail = null;
-
-        if (generateThumbnails == true)
+        string pixelHash = string.Empty;
+        
+        if (generateThumbnails)
         {
             try
             {
-                imageThumbnail = ImageToThumbnailBlob(specificFilePath);
-                if (imageThumbnail != null)
-                {
-                    Console.WriteLine($"[DEBUG] Thumbnail generated for {specificFilePath}: {imageThumbnail.Length} bytes");
-                }
-                else
-                {
-                    Console.WriteLine($"[DEBUG] Thumbnail is NULL for {specificFilePath}");
-                }
+                var (thumb, hash) = ImageToThumbnailBlobWithHash(specificFilePath);
+                imageThumbnail = thumb;
+                pixelHash = hash;
             }
             catch (Exception ex)
             {
-                // If thumbnail generation fails, log and set to null
                 Console.WriteLine($"Warning: Failed to generate thumbnail for {specificFilePath}: {ex.Message}");
                 imageThumbnail = null;
             }
-        }
-        else
-        {
-            Console.WriteLine($"[DEBUG] Thumbnail generation is DISABLED (generateThumbnails={generateThumbnails})");
         }
 
     // Add the new image to the database
@@ -742,7 +728,8 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
                 StuctMetadata = structJsonMetadata,
                 RecordAdded = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 
-                Thumbnail = imageThumbnail
+                Thumbnail = imageThumbnail,
+                PixelHash = pixelHash
             };
 
             dbFiles.Add(newImage);
@@ -1712,7 +1699,7 @@ static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, s
     return region.ToByteArray();
 }
 
-static byte[] ImageToThumbnailBlob(string imagePath, int maxThumbSize = 384)
+static (byte[] thumbnail, string pixelHash) ImageToThumbnailBlobWithHash(string imagePath, int maxThumbSize = 384)
 {
     using var img = new MagickImage(imagePath);
 
@@ -1721,6 +1708,26 @@ static byte[] ImageToThumbnailBlob(string imagePath, int maxThumbSize = 384)
 
     int imgWidth = (int)img.Width;
     int imgHeight = (int)img.Height;
+    
+    // Compute pixel hash BEFORE resizing (while image is already decoded)
+    string pixelHash = string.Empty;
+    try
+    {
+        // Clone image, strip metadata, and hash raw pixels
+        using var clonedImg = img.Clone();
+        clonedImg.Strip();
+        byte[] pixelData = clonedImg.ToByteArray(MagickFormat.Rgb);
+        using (SHA1 sha = SHA1.Create())
+        {
+            byte[] checksum = sha.ComputeHash(pixelData);
+            pixelHash = BitConverter.ToString(checksum).Replace("-", string.Empty);
+        }
+    }
+    catch
+    {
+        // If pixel hash fails, use empty string
+        pixelHash = string.Empty;
+    }
 
     //
     // Compute proper thumbnail dimensions (preserving aspect ratio)
@@ -1729,6 +1736,7 @@ static byte[] ImageToThumbnailBlob(string imagePath, int maxThumbSize = 384)
     int newW = imgWidth;
     int newH = imgHeight;
 
+    // Only resize if image exceeds max thumbnail size
     if (maxDim > maxThumbSize)
     {
         double scale = (double)maxThumbSize / maxDim;
@@ -1756,9 +1764,9 @@ static byte[] ImageToThumbnailBlob(string imagePath, int maxThumbSize = 384)
     img.Quality = 60;   // lightweight thumbnail—tweak as needed
 
     //
-    // Return blob
+    // Return blob and pixel hash
     //
-    return img.ToByteArray();
+    return (img.ToByteArray(), pixelHash);
 }
 
 

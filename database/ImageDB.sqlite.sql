@@ -59,6 +59,7 @@ CREATE TABLE "Image" (
 	"ModifiedBatchId"	INTEGER,
 	"DateTimeTakenSource"	TEXT,
 	"Thumbnail"	BLOB DEFAULT NULL,
+	"PixelHash"	TEXT,
 	PRIMARY KEY("ImageId" AUTOINCREMENT)
 );
 DROP TABLE IF EXISTS "Location";
