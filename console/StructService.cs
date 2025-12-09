@@ -1,4 +1,5 @@
 ﻿using ImageDB.Models;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -61,6 +62,22 @@ namespace ImageDB
             }
         }
 
+        /// <summary>
+        /// Gets existing collections for an image (for comparison).
+        /// Returns tuples of (CollectionName, CollectionUri).
+        /// </summary>
+        public async Task<HashSet<(string name, string uri)>> GetExistingCollections(int imageId)
+        {
+            var existingCollections = await dbFiles.Collections
+                .Where(c => c.ImageId == imageId)
+                .Select(c => new { c.CollectionName, c.CollectionUri })
+                .ToListAsync();
+            
+            return existingCollections
+                .Select(c => (c.CollectionName ?? string.Empty, c.CollectionUri ?? string.Empty))
+                .ToHashSet();
+        }
+
         public async Task DeleteCollections(int imageId)
         {
             // Delete all collections for the given imageId
@@ -97,6 +114,22 @@ namespace ImageDB
             }
 
             dbFiles.SaveChanges();
+        }
+
+        /// <summary>
+        /// Gets existing persons for an image (for comparison).
+        /// Returns tuples of (PersonName, PersonIdentifier).
+        /// </summary>
+        public async Task<HashSet<(string name, string identifier)>> GetExistingPersons(int imageId)
+        {
+            var existingPersons = await dbFiles.Persons
+                .Where(p => p.ImageId == imageId)
+                .Select(p => new { p.PersonName, p.PersonIdentifier })
+                .ToListAsync();
+            
+            return existingPersons
+                .Select(p => (p.PersonName ?? string.Empty, p.PersonIdentifier ?? string.Empty))
+                .ToHashSet();
         }
 
         public async Task DeletePersons(int imageId)

@@ -1,4 +1,5 @@
 ﻿using ImageDB.Models;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -27,6 +28,22 @@ namespace ImageDB
         public PeopleTagService(CDatabaseImageDBsqliteContext context)
         {
             dbFiles = context;
+        }
+
+        /// <summary>
+        /// Gets existing people tag names for an image (for comparison).
+        /// </summary>
+        public async Task<HashSet<string>> GetExistingPeopleTagNames(int imageId)
+        {
+            var existingNames = await dbFiles.RelationPeopleTags
+                .Where(r => r.ImageId == imageId)
+                .Join(dbFiles.PeopleTags,
+                    relation => relation.PeopleTagId,
+                    peopleTag => peopleTag.PeopleTagId,
+                    (relation, peopleTag) => peopleTag.PersonName)
+                .ToListAsync();
+            
+            return new HashSet<string>(existingNames, StringComparer.OrdinalIgnoreCase);
         }
 
         public async Task DeleteRelations(int imageId)

@@ -1001,15 +1001,24 @@ static async Task ProcessPeopleTags(CDatabaseImageDBsqliteContext dbFiles, int i
     // Microsoft People Tags - Ref: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-people-tagging
     // IPTC Extension Person In Image - Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata#person-shown-in-the-image
 
-    HashSet<string> peopleTag = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage", "XMP-iptcExt:PersonInImageName" });
+    HashSet<string> newPeopleTags = GetExiftoolListValues(doc, new string[] { "XMP-MP:RegionPersonDisplayName", "XMP-mwg-rs:RegionName", "XMP-iptcExt:PersonInImage", "XMP-iptcExt:PersonInImageName" });
 
     var servicePeopleTags = new PeopleTagService(dbFiles);
-    await servicePeopleTags.DeleteRelations(imageID); // Delete existing tags
-
-    foreach (var name in peopleTag)
+    
+    // Compare with existing tags - only update if changed
+    var existingPeopleTags = await servicePeopleTags.GetExistingPeopleTagNames(imageID);
+    
+    if (!newPeopleTags.SetEquals(existingPeopleTags))
     {
-        await servicePeopleTags.AddPeopleTags(name, imageID);
+        // Tags have changed - delete and recreate
+        await servicePeopleTags.DeleteRelations(imageID);
+        
+        foreach (var name in newPeopleTags)
+        {
+            await servicePeopleTags.AddPeopleTags(name, imageID);
+        }
     }
+    // else: Tags unchanged, skip delete/insert operations
 }
 
 /// <summary>
@@ -1019,15 +1028,24 @@ static async Task ProcessDescriptiveTags(CDatabaseImageDBsqliteContext dbFiles, 
 {
     // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
     // Also reading legacy Windows XP Exif keyword tags. The tags are still supported in Windows and written to by some applications such as Windows File Explorer.
-    HashSet<string> descriptiveTag = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
+    HashSet<string> newDescriptiveTags = GetExiftoolListValues(doc, new string[] { "IPTC:Keywords", "XMP-dc:Subject", "IFD0:XPKeywords" });
 
     var serviceDescriptiveTags = new DescriptiveTagService(dbFiles);
-    await serviceDescriptiveTags.DeleteAllRelations(imageID); // Delete existing tags
-
-    foreach (var tag in descriptiveTag)
+    
+    // Compare with existing tags - only update if changed
+    var existingDescriptiveTags = await serviceDescriptiveTags.GetExistingTagNames(imageID);
+    
+    if (!newDescriptiveTags.SetEquals(existingDescriptiveTags))
     {
-        await serviceDescriptiveTags.AddTags(tag, imageID);
+        // Tags have changed - delete and recreate
+        await serviceDescriptiveTags.DeleteAllRelations(imageID);
+        
+        foreach (var tag in newDescriptiveTags)
+        {
+            await serviceDescriptiveTags.AddTags(tag, imageID);
+        }
     }
+    // else: Tags unchanged, skip delete/insert operations
 }
 
 /// <summary>
@@ -1037,13 +1055,11 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
 {
     var mwgStruct = new StructService(dbFiles);
     
-    // Get existing regions for comparison (before deleting)
+    // Get existing data for comparison (before deleting)
     var existingRegions = await mwgStruct.GetExistingRegions(imageID);
+    var existingCollections = await mwgStruct.GetExistingCollections(imageID);
+    var existingPersons = await mwgStruct.GetExistingPersons(imageID);
     var regionIdsToKeep = new List<int>();
-    
-    // Delete collections and persons (always regenerated)
-    await mwgStruct.DeleteCollections(imageID);
-    await mwgStruct.DeletePersons(imageID);
 
     if (structJsonMetadata != string.Empty)
     {
@@ -1110,15 +1126,31 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
                     await mwgStruct.DeleteRegionsExcept(imageID, regionIdsToKeep);
                 }
 
-                // Add Collections
+                // Add Collections (with smart comparison)
                 try
                 {
                     if (structMeta?.Collections?.Any() == true)
                     {
-                        foreach (var col in structMeta.Collections)
+                        var newCollections = structMeta.Collections
+                            .Select(c => (c.CollectionName ?? string.Empty, c.CollectionURI ?? string.Empty))
+                            .ToHashSet();
+                        
+                        if (!newCollections.SetEquals(existingCollections))
                         {
-                            await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
+                            // Collections changed - delete and recreate
+                            await mwgStruct.DeleteCollections(imageID);
+                            
+                            foreach (var col in structMeta.Collections)
+                            {
+                                await mwgStruct.AddCollection(imageID, col.CollectionName, col.CollectionURI);
+                            }
                         }
+                        // else: Collections unchanged
+                    }
+                    else if (existingCollections.Count > 0)
+                    {
+                        // No new collections but existing ones - delete them
+                        await mwgStruct.DeleteCollections(imageID);
                     }
                 }
                 catch (Exception ex)
@@ -1128,22 +1160,41 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
                     LogEntry(0, sourceFile, "[Unable to read MWG Collection] - " + ex.ToString());
                 }
 
-                // Add Persons
+                // Add Persons (with smart comparison)
                 try
                 {
                     if (structMeta?.PersonInImageWDetails?.Any() == true)
                     {
+                        var newPersons = new HashSet<(string name, string identifier)>();
                         foreach (var per in structMeta.PersonInImageWDetails)
                         {
-                            //If person name is not available, use empty string  
-                            string personName = per.PersonName ?? String.Empty;
-
-                            //Add each PersonId associated with the person
+                            string personName = per.PersonName ?? string.Empty;
                             foreach (var perId in per.PersonId)
                             {
-                                await mwgStruct.AddPerson(imageID, personName, perId);
+                                newPersons.Add((personName, perId ?? string.Empty));
                             }
                         }
+                        
+                        if (!newPersons.SetEquals(existingPersons))
+                        {
+                            // Persons changed - delete and recreate
+                            await mwgStruct.DeletePersons(imageID);
+                            
+                            foreach (var per in structMeta.PersonInImageWDetails)
+                            {
+                                string personName = per.PersonName ?? String.Empty;
+                                foreach (var perId in per.PersonId)
+                                {
+                                    await mwgStruct.AddPerson(imageID, personName, perId);
+                                }
+                            }
+                        }
+                        // else: Persons unchanged
+                    }
+                    else if (existingPersons.Count > 0)
+                    {
+                        // No new persons but existing ones - delete them
+                        await mwgStruct.DeletePersons(imageID);
                     }
                 }
                 catch (Exception ex)
