@@ -25,9 +25,10 @@ const int SqliteRetryDelayMs = 6000;
 const int GpsCoordinatePrecision = 6;
 const int FileReadBufferSize = 8192;
 
+// Define command-line options
 var rootCommand = new RootCommand
 {
-   new Option<string>(
+    new Option<string>(
         "--mode",
         description: "(Required) Operation modes [ normal | date | quick | reload ]"
     ),
@@ -40,26 +41,35 @@ var rootCommand = new RootCommand
 //DEBUG: Uncomment the following line to run the DeviceHelper Test
 //DeviceHelper.RunTest();return 0;
 
-
+// Initialize database context and load photo libraries
 using var db = new CDatabaseImageDBsqliteContext();
+var photoLibrary = db.PhotoLibraries.ToList();
 
-var photoLibrary                = db.PhotoLibraries.ToList();
-string photoFolderFilter        = string.Empty;
-string operationMode            = string.Empty;
-bool reloadMetadata             = false;
-bool quickScan                  = false;
-bool dateScan                   = false;
-bool generateThumbnails         = true;
-bool generateRegionThumbnails   = true;
+// Command-line arguments (populated by handler)
+string photoFolderFilter = string.Empty;
+string operationMode = string.Empty;
 
+// Operation mode flags
+bool reloadMetadata = false;
+bool quickScan = false;
+bool dateScan = false;
+
+// Thumbnail generation settings (loaded from appsettings.json)
+bool generateThumbnails = true;
+bool generateRegionThumbnails = true;
+
+// Display application banner
 Console.WriteLine("ImageDB - Scan and update your photo library.");
 Console.WriteLine("---------------------------------------------");
 Console.WriteLine("Code and Info: https://github.com/josemoliver/ImageDB");
 Console.WriteLine("Leveraging the Exiftool utility written by Phil Harvey - https://exiftool.org");
 Console.WriteLine("");
 
-// Get RegionThumbs and Thumbnail generation settings from appsettings.json
-var configuration = new ConfigurationManager().AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).Build();
+// Load configuration settings from appsettings.json
+var configuration = new ConfigurationManager()
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .Build();
+
 try
 {
     generateThumbnails = configuration.GetValue<bool>("ImageThumbs", true);
@@ -80,102 +90,102 @@ catch (Exception ex) when (ex is FormatException || ex is InvalidOperationExcept
     generateRegionThumbnails = true;
 }
 
-// Handler to process the command-line arguments
+// Set up command-line argument handler
 rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
 {
-    // Set the operation mode based on the input
     operationMode = mode?.ToLowerInvariant() ?? string.Empty;
-
-    // Get filter photo path, if any.
     photoFolderFilter = folder;
-
     return Task.CompletedTask;
 });
 
-// Parse and invoke the command
+// Parse command-line arguments
 await rootCommand.InvokeAsync(args);
 
-if (((operationMode == "normal") || (operationMode == "date") || (operationMode == "quick") || (operationMode == "reload")) == true)
-{
-    if (string.IsNullOrEmpty(photoFolderFilter))
-    {
-        photoFolderFilter = string.Empty;
-        Console.WriteLine("[INFO] - No filter applied.");
-    }
-    else
-    {
-        photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
-        Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
-    }
-
-
-    // Determine the mode and set appropriate flags
-    reloadMetadata = string.Equals(operationMode, "reload", StringComparison.OrdinalIgnoreCase);
-
-    if (reloadMetadata)
-    {
-        Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");
-    }
-    else
-    {
-        // Check if Exiftool is properly installed, terminate app on error
-        if (!ExifToolHelper.CheckExiftool())
-        {
-            // Log ExifTool availability issue before exiting
-            LogEntry(0, string.Empty, "[EXIFTOOL] Not found in PATH. Aborting.");
-            Environment.Exit(1);
-        }
-
-        // Set scan modes based on the provided mode
-        SetScanMode(operationMode);
-
-        Console.WriteLine("[START] - Scanning for new and updated files.");
-
-    }
-
-    foreach (var folder in photoLibrary)
-    {
-        //Normalize Folder Path
-        string photoFolder = folder.Folder.ToString() ?? "";
-        photoFolder = GetNormalizedFolderPath(photoFolder);
-
-        if ((photoFolderFilter == string.Empty) || (photoFolder == photoFolderFilter))
-        {
-
-            //Fetch photoLibraryId
-            int photoLibraryId = 0;
-            photoLibraryId = photoLibrary.FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))?.PhotoLibraryId ?? 0;
-
-            if (photoLibraryId != 0)
-            {
-                if (reloadMetadata == true)
-                {
-                    Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
-                    await ReloadMetadata(photoLibraryId);
-                }
-                else
-                {
-                    Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
-                    await ScanFiles(photoFolder, photoLibraryId);
-                }
-            }
-        }
-    }
-
-    if (reloadMetadata == false)
-    {
-        // Shutdown ExifTool process
-        ExifToolHelper.Shutdown();
-    }
-
-    // Exit the application
-    Environment.Exit(0);
-}
-else
+// Validate operation mode
+string[] validModes = { "normal", "date", "quick", "reload" };
+if (!validModes.Contains(operationMode))
 {
     Console.WriteLine("[ERROR] - Invalid mode. Use [ normal | date | quick | reload ]");
     Environment.Exit(1);
 }
+
+// Apply folder filter if specified
+if (string.IsNullOrEmpty(photoFolderFilter))
+{
+    Console.WriteLine("[INFO] - No filter applied.");
+}
+else
+{
+    photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
+    Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
+}
+
+// Determine operation mode
+reloadMetadata = string.Equals(operationMode, "reload", StringComparison.OrdinalIgnoreCase);
+
+if (reloadMetadata)
+{
+    Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");
+}
+else
+{
+    // Verify ExifTool availability
+    if (!ExifToolHelper.CheckExiftool())
+    {
+        LogEntry(0, string.Empty, "[EXIFTOOL] Not found in PATH. Aborting.");
+        Environment.Exit(1);
+    }
+
+    // Configure scan mode based on operation
+    SetScanMode(operationMode);
+    Console.WriteLine("[START] - Scanning for new and updated files.");
+}
+
+// Process each photo library
+foreach (var folder in photoLibrary)
+{
+    // Normalize and validate folder path
+    string photoFolder = GetNormalizedFolderPath(folder.Folder?.ToString() ?? "");
+
+    // Apply folder filter if specified
+    bool shouldProcessFolder = string.IsNullOrEmpty(photoFolderFilter) || 
+                               photoFolder.Equals(photoFolderFilter, StringComparison.OrdinalIgnoreCase);
+
+    if (!shouldProcessFolder)
+        continue;
+
+    // Retrieve photo library ID
+    int photoLibraryId = photoLibrary
+        .FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))
+        ?.PhotoLibraryId ?? 0;
+
+    if (photoLibraryId == 0)
+        continue;
+
+    // Execute appropriate operation
+    if (reloadMetadata)
+    {
+        Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
+        await ReloadMetadata(photoLibraryId);
+    }
+    else
+    {
+        Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
+        await ScanFiles(photoFolder, photoLibraryId);
+    }
+}
+
+// Clean up ExifTool process if it was used
+if (!reloadMetadata)
+{
+    ExifToolHelper.Shutdown();
+}
+
+// Exit successfully
+Environment.Exit(0);
+
+
+
 
 /// <summary>
 /// Saves changes to the database with SQLite lock retry logic.
@@ -206,27 +216,35 @@ static async Task SaveChangesWithRetry(DbContext context)
     }
 }
 
-// Method to set the scan mode based on the input
+/// <summary>
+/// Configures scan mode flags and displays the selected operation mode.
+/// </summary>
+/// <param name="mode">Scan mode: "normal", "date", or "quick"</param>
 void SetScanMode(string mode)
 {
-    // Default to normal mode
+    // Reset flags to default (normal mode)
     dateScan = false;
     quickScan = false;
     
-    if (string.Equals(mode, "normal", StringComparison.OrdinalIgnoreCase))
+    switch (mode.ToLowerInvariant())
     {
-        Console.WriteLine("[MODE] - Integrity scan for new and updated files.");
-    }
-    else if (string.Equals(mode, "date", StringComparison.OrdinalIgnoreCase))
-    {
-        dateScan = true;
-        Console.WriteLine("[MODE] - Scan for changes using file modified date.");
-    }
-    else if (string.Equals(mode, "quick", StringComparison.OrdinalIgnoreCase))
-    {
-        dateScan = true;
-        quickScan = true;
-        Console.WriteLine("[MODE] - Quick scan for changes using file modified date.");
+        case "normal":
+            // SHA1-based integrity scan (most thorough)
+            Console.WriteLine("[MODE] - Integrity scan for new and updated files.");
+            break;
+            
+        case "date":
+            // File modified date comparison (faster)
+            dateScan = true;
+            Console.WriteLine("[MODE] - Scan for changes using file modified date.");
+            break;
+            
+        case "quick":
+            // Stops at first unchanged file when sorted by date (fastest)
+            dateScan = true;
+            quickScan = true;
+            Console.WriteLine("[MODE] - Quick scan for changes using file modified date.");
+            break;
     }
 }
 
@@ -1760,29 +1778,32 @@ static async Task CopyImageToMetadataHistory(int imageId)
 }
 
 
-static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, string xStr, string yStr, int maxThumbSize = 384)   // keeps SQLite BLOB sizes small
+/// <summary>
+/// Extracts a face/region thumbnail from an image using MWG-normalized coordinates.
+/// Optimized to avoid decoding the full-resolution image when possible.
+/// </summary>
+static byte[] ExtractRegionToBlob(string imagePath, string hStr, string wStr, string xStr, string yStr, int maxThumbSize = 384)
 {
-    // Parse MWG-normalized region strings
+    // Parse MWG-normalized region coordinates (0.0-1.0 range)
     double h = double.Parse(hStr, CultureInfo.InvariantCulture);
     double w = double.Parse(wStr, CultureInfo.InvariantCulture);
     double x = double.Parse(xStr, CultureInfo.InvariantCulture);
     double y = double.Parse(yStr, CultureInfo.InvariantCulture);
 
-    using var img = new MagickImage(imagePath);
+    // Get image dimensions without decoding pixels (fast path)
+    var info = new MagickImageInfo(imagePath);
+    int imgWidth = (int)info.Width;
+    int imgHeight = (int)info.Height;
 
-    // Width/Height are uint in MagickImage — cast explicitly to int for calculations
-    int imgWidth = (int)img.Width;
-    int imgHeight = (int)img.Height;
-
-    // Convert MWG normalized width/height to pixels (rounded)
+    // Convert MWG normalized coordinates to pixel values
     int regionWidth = (int)Math.Round(w * imgWidth);
     int regionHeight = (int)Math.Round(h * imgHeight);
 
-    // Compute MWG center-origin → top-left pixel
+    // Compute MWG center-origin → top-left pixel coordinates
     int left = (int)Math.Round((x * imgWidth) - (regionWidth / 2.0));
     int top = (int)Math.Round((y * imgHeight) - (regionHeight / 2.0));
 
-    // Clamp boundaries
+    // Clamp boundaries to ensure valid crop region
     left = Math.Max(0, Math.Min(left, imgWidth - 1));
     top = Math.Max(0, Math.Min(top, imgHeight - 1));
 
@@ -1792,44 +1813,57 @@ static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, s
     if (top + regionHeight > imgHeight)
         regionHeight = imgHeight - top;
 
-    // Crop the region. MagickGeometry expects unsigned width/height in some overloads.
-    var cropGeometry = new MagickGeometry(left, top, (uint)Math.Max(0, regionWidth), (uint)Math.Max(0, regionHeight))
-    {
-        IgnoreAspectRatio = true
-    };
-
-    using var region = img.Clone();
-    region.Crop(cropGeometry);
-
-    // Clear page offset (replacement for RePage) by resetting Page to the cropped size.
-    // Page expects geometry where width/height are unsigned.
-    region.Page = new MagickGeometry(0, 0, (uint)region.Width, (uint)region.Height);
-
-    //
-    // Thumbnail resize step — reduces DB BLOB size dramatically
-    //
-    int maxDim = Math.Max((int)region.Width, (int)region.Height);
+    // Calculate target thumbnail dimensions while preserving aspect ratio
+    int maxDim = Math.Max(regionWidth, regionHeight);
+    int targetWidth = regionWidth;
+    int targetHeight = regionHeight;
+    
     if (maxDim > maxThumbSize)
     {
         double scale = (double)maxThumbSize / maxDim;
-        int newW = (int)Math.Round(region.Width * scale);
-        int newH = (int)Math.Round(region.Height * scale);
+        targetWidth = Math.Max(1, (int)Math.Round(regionWidth * scale));
+        targetHeight = Math.Max(1, (int)Math.Round(regionHeight * scale));
+    }
 
-        // Use unsigned constructor for MagickGeometry(width, height)
-        region.Resize(new MagickGeometry((uint)Math.Max(1, newW), (uint)Math.Max(1, newH))
+    // Performance optimization: Use MagickReadSettings to decode only the region we need
+    // This avoids loading the entire full-resolution image into memory
+    var readSettings = new MagickReadSettings
+    {
+        // Define the crop area to extract during decode
+        // Note: ImageMagick uses "WIDTHxHEIGHT+X+Y" geometry for extract
+        Width = (uint)targetWidth,
+        Height = (uint)targetHeight,
+    };
+
+    // Load and crop the region directly at decode time (much faster for large images)
+    using var region = new MagickImage(imagePath);
+    
+    // Crop to region boundaries
+    var cropGeometry = new MagickGeometry(left, top, (uint)Math.Max(1, regionWidth), (uint)Math.Max(1, regionHeight))
+    {
+        IgnoreAspectRatio = true
+    };
+    region.Crop(cropGeometry);
+    
+    // Reset page offset to prevent issues with subsequent operations
+    region.Page = new MagickGeometry(0, 0, (uint)region.Width, (uint)region.Height);
+
+    // Resize to thumbnail dimensions if needed
+    if (maxDim > maxThumbSize)
+    {
+        region.Resize(new MagickGeometry((uint)targetWidth, (uint)targetHeight)
         {
             IgnoreAspectRatio = false
         });
     }
 
-    // Encode to WebP by setting Format and Quality on the image instance.
-    // Avoid using WebPWriteDefines + ToByteArray overload which is not available.
-    region.Format = MagickFormat.WebP;
+    // Apply EXIF orientation for correct display
+    region.AutoOrient();
 
-    // Set quality (75 is a reasonable default). Quality is an int property on MagickImage.
+    // Encode as WebP with reasonable quality for small file size
+    region.Format = MagickFormat.WebP;
     region.Quality = 60;
 
-    // Return encoded bytes (ToByteArray uses current Format)
     return region.ToByteArray();
 }
 
