@@ -7,8 +7,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Linq;
@@ -287,6 +289,7 @@ async Task ReloadMetadata(int photoLibraryId)
 
 async Task ScanFiles(string photoFolder, int photoLibraryId)
 {
+    var scanStartTime = System.Diagnostics.Stopwatch.StartNew();
     Console.WriteLine("[START] - Scanning folder for images: "+ photoFolder);
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -354,56 +357,79 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
         // PERFORMANCE OPTIMIZATION: Pre-compute SHA1 hashes in parallel
         var sha1Cache = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         
+        // OPTIMIZATION: Pre-compute thumbnails and pixel hashes in parallel for NEW files only
+        var thumbnailCache = new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        var pixelHashCache = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // COMBINED OPTIMIZATION: For new files with thumbnails enabled, do SHA1+thumbnail in SINGLE pass
+        // This eliminates duplicate file reads (was: SHA1 first, then thumbnail second = 2 reads)
         if (dateScan == false)
         {
-            // Normal mode: Pre-compute SHA1 for all files in parallel (needed for comparison)
-            Console.WriteLine("[SHA1] Pre-computing hashes in parallel...");
-            
-            int totalFiles = imageFiles.Count;
-            int processedFiles = 0;
-            var progressLock = new object();
-            
-            // PERFORMANCE: Partitioner for better work distribution across cores
-            var partitioner = System.Collections.Concurrent.Partitioner.Create(imageFiles, EnumerablePartitionerOptions.NoBuffering);
-            
-            System.Threading.Tasks.Parallel.ForEach(partitioner, 
-                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
-                imageFile =>
-                {
-                    try
-                    {
-                        string hash = getFileSHA1(imageFile.FilePath);
-                        sha1Cache[imageFile.FilePath] = hash;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
-                        sha1Cache[imageFile.FilePath] = string.Empty;
-                    }
-                    
-                    // Update progress (batched updates to reduce lock contention)
-                    int currentProcessed = System.Threading.Interlocked.Increment(ref processedFiles);
-                    if (currentProcessed % 10 == 0 || currentProcessed == totalFiles)
-                    {
-                        int percentage = (int)((double)currentProcessed / totalFiles * 100);
-                        Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalFiles} ({percentage}%)");
-                    }
-                });
-            Console.WriteLine($"\n[SHA1] Computed {sha1Cache.Count} hashes.");
-        }
-        else
-        {
-            // Date/Quick mode: Only pre-compute SHA1 for new files (not in DB yet)
+            // Normal mode: Split into new files (combined generation) vs existing files (SHA1-only)
             var newFiles = imageFiles.Where(f => !existingImages.ContainsKey(f.FilePath)).ToList();
+            var existingFiles = imageFiles.Where(f => existingImages.ContainsKey(f.FilePath)).ToList();
             
-            if (newFiles.Count > 0)
+            // PHASE 1: NEW FILES - Combined SHA1+Thumbnail generation (single read per file)
+            if (generateThumbnails && newFiles.Count > 0)
             {
-                Console.WriteLine($"[SHA1] Pre-computing hashes for {newFiles.Count} new files in parallel...");
+                Console.WriteLine($"[OPTIMIZED] Pre-generating {newFiles.Count} new files (SHA1 + thumbnail + pixel hash)...");
                 
-                int totalNewFiles = newFiles.Count;
-                int processedNewFiles = 0;
+                const int BATCH_SIZE = 50; // Process in blocks to manage memory
+                int totalFiles = newFiles.Count;
+                int processedFiles = 0;
                 
-                // PERFORMANCE: Partitioner for better work distribution across cores
+                for (int batchStart = 0; batchStart < newFiles.Count; batchStart += BATCH_SIZE)
+                {
+                    var batch = newFiles.Skip(batchStart).Take(BATCH_SIZE).ToList();
+                    int batchProgress = 0;
+                    
+                    var partitioner = System.Collections.Concurrent.Partitioner.Create(batch, EnumerablePartitionerOptions.NoBuffering);
+                    
+                    System.Threading.Tasks.Parallel.ForEach(partitioner,
+                        new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                        imageFile =>
+                        {
+                            try
+                            {
+                                // OPTIMIZED: File-based SHA1 (for integrity) + single image load for thumbnail + pixel hash
+                                var (fileSHA1, thumb, pixelHash, loadedImage) = GenerateSHA1AndThumbnailCombined(imageFile.FilePath);
+                                
+                                sha1Cache[imageFile.FilePath] = fileSHA1;
+                                thumbnailCache[imageFile.FilePath] = thumb;
+                                pixelHashCache[imageFile.FilePath] = pixelHash;
+                                
+                                loadedImage?.Dispose();
+                            }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"\n[WARNING] Combined generation failed for {imageFile.FilePath}: {ex.Message}");
+                                    sha1Cache[imageFile.FilePath] = string.Empty;
+                                    thumbnailCache[imageFile.FilePath] = Array.Empty<byte>();
+                                    pixelHashCache[imageFile.FilePath] = string.Empty;
+                                }                            int currentProcessed = System.Threading.Interlocked.Increment(ref batchProgress);
+                            int totalProcessed = processedFiles + currentProcessed;
+                            if (currentProcessed % 10 == 0 || totalProcessed == totalFiles)
+                            {
+                                int percentage = (int)((double)totalProcessed / totalFiles * 100);
+                                Console.Write($"\r[OPTIMIZED] Progress: {totalProcessed}/{totalFiles} ({percentage}%)");
+                            }
+                        });
+                    
+                    processedFiles += batch.Count;
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                }
+                
+                Console.WriteLine($"\n[OPTIMIZED] Generated {newFiles.Count} (file SHA1 + thumbnail + pixel hash).");
+            }
+            else if (newFiles.Count > 0)
+            {
+                // Thumbnails disabled - SHA1-only for new files
+                Console.WriteLine($"[SHA1] Pre-computing hashes for {newFiles.Count} new files...");
+                
+                int totalNew = newFiles.Count;
+                int processedNew = 0;
+                
                 var partitioner = System.Collections.Concurrent.Partitioner.Create(newFiles, EnumerablePartitionerOptions.NoBuffering);
                 
                 System.Threading.Tasks.Parallel.ForEach(partitioner,
@@ -421,21 +447,163 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                             sha1Cache[imageFile.FilePath] = string.Empty;
                         }
                         
-                        // Update progress (batched updates to reduce lock contention)
-                        int currentProcessed = System.Threading.Interlocked.Increment(ref processedNewFiles);
-                        if (currentProcessed % 10 == 0 || currentProcessed == totalNewFiles)
+                        int currentProcessed = System.Threading.Interlocked.Increment(ref processedNew);
+                        if (currentProcessed % 10 == 0 || currentProcessed == totalNew)
                         {
-                            int percentage = (int)((double)currentProcessed / totalNewFiles * 100);
-                            Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalNewFiles} ({percentage}%)");
+                            int percentage = (int)((double)currentProcessed / totalNew * 100);
+                            Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalNew} ({percentage}%)");
                         }
                     });
-                Console.WriteLine($"\n[SHA1] Computed {sha1Cache.Count} hashes for new files.");
+                Console.WriteLine($"\n[SHA1] Computed {newFiles.Count} hashes for new files.");
+            }
+            
+            // PHASE 2: EXISTING FILES - SHA1-only (needed for comparison)
+            if (existingFiles.Count > 0)
+            {
+                Console.WriteLine($"[SHA1] Pre-computing hashes for {existingFiles.Count} existing files...");
+                
+                int totalExisting = existingFiles.Count;
+                int processedExisting = 0;
+                
+                var partitioner = System.Collections.Concurrent.Partitioner.Create(existingFiles, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+                
+                System.Threading.Tasks.Parallel.ForEach(partitioner,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    imageFile =>
+                    {
+                        try
+                        {
+                            string hash = getFileSHA1(imageFile.FilePath);
+                            sha1Cache[imageFile.FilePath] = hash;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                            sha1Cache[imageFile.FilePath] = string.Empty;
+                        }
+                        
+                        int currentProcessed = System.Threading.Interlocked.Increment(ref processedExisting);
+                        if (currentProcessed % 10 == 0 || currentProcessed == totalExisting)
+                        {
+                            int percentage = (int)((double)currentProcessed / totalExisting * 100);
+                            Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalExisting} ({percentage}%)");
+                        }
+                    });
+                Console.WriteLine($"\n[SHA1] Computed {existingFiles.Count} hashes for existing files.");
+            }
+        }
+        else
+        {
+            // Date/Quick mode: Only process new files (not in DB yet)
+            var newFiles = imageFiles.Where(f => !existingImages.ContainsKey(f.FilePath)).ToList();
+            
+            if (newFiles.Count > 0)
+            {
+                if (generateThumbnails)
+                {
+                    // COMBINED: SHA1+Thumbnail for new files
+                    Console.WriteLine($"[OPTIMIZED] Pre-generating {newFiles.Count} new files (SHA1 + thumbnail + pixel hash)...");
+                    
+                    const int BATCH_SIZE = 50;
+                    int totalFiles = newFiles.Count;
+                    int processedFiles = 0;
+                    
+                    for (int batchStart = 0; batchStart < newFiles.Count; batchStart += BATCH_SIZE)
+                    {
+                        var batch = newFiles.Skip(batchStart).Take(BATCH_SIZE).ToList();
+                        int batchProgress = 0;
+                        
+                        var partitioner = System.Collections.Concurrent.Partitioner.Create(batch, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+                        
+                        System.Threading.Tasks.Parallel.ForEach(partitioner,
+                            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                            imageFile =>
+                            {
+                                try
+                                {
+                                    var (fileSHA1, thumb, pixelHash, loadedImage) = GenerateSHA1AndThumbnailCombined(imageFile.FilePath);
+                                    
+                                    sha1Cache[imageFile.FilePath] = fileSHA1;
+                                    thumbnailCache[imageFile.FilePath] = thumb;
+                                    pixelHashCache[imageFile.FilePath] = pixelHash;
+                                    
+                                    loadedImage?.Dispose();
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"\n[WARNING] Combined generation failed for {imageFile.FilePath}: {ex.Message}");
+                                    sha1Cache[imageFile.FilePath] = string.Empty;
+                                    thumbnailCache[imageFile.FilePath] = Array.Empty<byte>();
+                                    pixelHashCache[imageFile.FilePath] = string.Empty;
+                                }
+                                
+                                int currentProcessed = System.Threading.Interlocked.Increment(ref batchProgress);
+                                int totalProcessed = processedFiles + currentProcessed;
+                                if (currentProcessed % 10 == 0 || totalProcessed == totalFiles)
+                                {
+                                    int percentage = (int)((double)totalProcessed / totalFiles * 100);
+                                    Console.Write($"\r[OPTIMIZED] Progress: {totalProcessed}/{totalFiles} ({percentage}%)");
+                                }
+                            });
+                        
+                        processedFiles += batch.Count;
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                    }
+                    
+                    Console.WriteLine($"\n[OPTIMIZED] Generated {newFiles.Count} (file SHA1 + thumbnail + pixel hash).");
+                }
+                else
+                {
+                    // SHA1-only for new files when thumbnails disabled
+                    Console.WriteLine($"[SHA1] Pre-computing hashes for {newFiles.Count} new files...");
+                    
+                    int totalNewFiles = newFiles.Count;
+                    int processedNewFiles = 0;
+                    
+                    var partitioner = System.Collections.Concurrent.Partitioner.Create(newFiles, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+                    
+                    System.Threading.Tasks.Parallel.ForEach(partitioner,
+                        new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                        imageFile =>
+                        {
+                            try
+                            {
+                                string hash = getFileSHA1(imageFile.FilePath);
+                                sha1Cache[imageFile.FilePath] = hash;
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                                sha1Cache[imageFile.FilePath] = string.Empty;
+                            }
+                            
+                            int currentProcessed = System.Threading.Interlocked.Increment(ref processedNewFiles);
+                            if (currentProcessed % 10 == 0 || currentProcessed == totalNewFiles)
+                            {
+                                int percentage = (int)((double)currentProcessed / totalNewFiles * 100);
+                                Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalNewFiles} ({percentage}%)");
+                            }
+                        });
+                    Console.WriteLine($"\n[SHA1] Computed {newFiles.Count} hashes for new files.");
+                }
             }
         }
 
         // Iterate over each image file
+        Console.WriteLine($"[PROCESSING] Processing {imageFiles.Count} files...");
+        int lastProgressPercent = -1;
+        
         for (int i = 0; i < imageFiles.Count; i++)
         {
+            // Update progress bar (every 1% or at completion)
+            int currentPercent = (int)((double)(i + 1) / imageFiles.Count * 100);
+            if (currentPercent != lastProgressPercent || i == imageFiles.Count - 1)
+            {
+                lastProgressPercent = currentPercent;
+                Console.Write($"\r[PROCESSING] Progress: {i + 1}/{imageFiles.Count} ({currentPercent}%)");
+            }
+            
             if (suspendScan == true)
             {
                 break;
@@ -458,7 +626,7 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
-                    await AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
+                    await AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1, thumbnailCache, pixelHashCache);
                     filesAdded++;                    
                 }
                 catch (Exception ex)
@@ -496,7 +664,7 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                     try
                     {
                         await CopyImageToMetadataHistory(imageId);
-                        await UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID, thumbnailCache, pixelHashCache);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -516,7 +684,7 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                     {
                         // Update file record
                         await CopyImageToMetadataHistory(imageId);
-                        await UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID, thumbnailCache, pixelHashCache);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -534,7 +702,7 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                     try
                     {
                         // Update file record
-                        await UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID, thumbnailCache, pixelHashCache);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -565,6 +733,7 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
             }
 
         }
+        Console.WriteLine(); // Newline after progress bar
 
         // Check if files have been deleted
         // Use the pre-loaded dictionary for faster lookups
@@ -624,6 +793,22 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
 
             Console.WriteLine("[BATCH] - Completed job # " + batchID);
             Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
+
+            // Display elapsed time from scan start
+            scanStartTime.Stop();
+            var scanElapsed = scanStartTime.Elapsed;
+            if (scanElapsed.TotalHours >= 1)
+            {
+                Console.WriteLine($"[TIME] Photo library processed in {(int)scanElapsed.TotalHours}h {scanElapsed.Minutes}m {scanElapsed.Seconds}s");
+            }
+            else if (scanElapsed.TotalMinutes >= 1)
+            {
+                Console.WriteLine($"[TIME] Photo library processed in {(int)scanElapsed.TotalMinutes}m {scanElapsed.Seconds}s");
+            }
+            else
+            {
+                Console.WriteLine($"[TIME] Photo library processed in {scanElapsed.TotalSeconds:F1}s");
+            }
 
             // Warn if not all files were processed
             if (imageFiles.Count != filesAdded + filesUpdated + filesSkipped + filesError)
@@ -685,7 +870,9 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
 /// <param name="imageId">Database ImageId of the record to update.</param>
 /// <param name="updatedSHA1">New SHA1 (or null/empty if unchanged) used for integrity tracking.</param>
 /// <param name="batchID">Batch identifier for audit; pass null when not part of a batch.</param>
-async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
+async Task UpdateImage(int imageId, string updatedSHA1, int batchID,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? thumbnailCache = null,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string>? pixelHashCache = null)
 {
     string specificFilePath     = string.Empty;
     string jsonMetadata         = string.Empty;
@@ -732,7 +919,7 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
     }
         
     // Thumbnail generation now happens in UpdateImageRecord based on region changes
-    await UpdateImageRecord(imageId, updatedSHA1, batchID);
+    await UpdateImageRecord(imageId, updatedSHA1, batchID, thumbnailCache, pixelHashCache);
 }
 
 /// <summary>
@@ -747,7 +934,9 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
 /// <param name="fileExtension">Raw extension; will be normalized (e.g., jpg → jpeg).</param>
 /// <param name="fileSize">File size in bytes.</param>
 /// <param name="SHA1">SHA1 digest for integrity checks.</param>
-async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1)
+async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? thumbnailCache = null,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string>? pixelHashCache = null)
 {
     int imageId                 = 0;
     string jsonMetadata         = string.Empty;
@@ -809,7 +998,7 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             imageId = newImage.ImageId;
         }
 
-        await UpdateImageRecord(imageId, SHA1, null);
+        await UpdateImageRecord(imageId, SHA1, null, thumbnailCache, pixelHashCache);
 }
 
 /// <summary>
@@ -1365,7 +1554,9 @@ static async Task ProcessLocationIdentifiers(CDatabaseImageDBsqliteContext dbFil
     }
 }
 
-async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
+async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId, 
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? thumbnailCache = null,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string>? pixelHashCache = null)
 {
     // Initialize variables for metadata extraction
     string jsonMetadata = string.Empty;
@@ -1481,21 +1672,49 @@ async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                 // PATH DECISION: Choose optimal thumbnail generation strategy
                 if (generateThumbnails)
                 {
-                    // PATH 1: No thumbnail exists - generate main + cache for regions
+                    // PATH 1: No thumbnail exists - check cache first, then generate if needed
                     if (existingThumbnail == null || existingThumbnail.Length == 0)
                     {
-                        try
+                        // OPTIMIZATION: Check if thumbnail was pre-generated in parallel batch
+                        if (thumbnailCache != null && pixelHashCache != null &&
+                            thumbnailCache.TryGetValue(sourceFilePath, out var cachedThumb) && 
+                            pixelHashCache.TryGetValue(sourceFilePath, out var cachedHash))
                         {
-                            var (thumb, hash, loadedImage) = ImageToThumbnailBlobWithHashAndImage(sourceFilePath);
-                            mainThumbnail = thumb;
-                            computedPixelHash = hash;
-                            cachedImageForRegions = loadedImage; // Cache for region extraction
-                            Console.WriteLine($"[THUMBNAIL] Generated for first time: {sourceFilePath}");
+                            mainThumbnail = cachedThumb;
+                            computedPixelHash = cachedHash;
+                            
+                            // If regions will change, load image for region extraction
+                            if (regionsWillChange)
+                            {
+                                try
+                                {
+                                    cachedImageForRegions = new MagickImage(sourceFilePath);
+                                    cachedImageForRegions.AutoOrient();
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[WARNING] Image load for regions failed: {ex.Message}");
+                                }
+                            }
+                            
+                            Console.WriteLine($"[THUMBNAIL] Using pre-generated cache: {sourceFilePath}");
                         }
-                        catch (Exception ex)
+                        else
                         {
-                            Console.WriteLine($"[WARNING] Thumbnail generation failed for {sourceFilePath}: {ex.Message}");
-                            LogEntry(batchId ?? 0, sourceFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
+                            // Cache miss - generate now (fallback for edge cases)
+                            try
+                            {
+                                var (thumb, hash, loadedImage) = ImageToThumbnailBlobWithHashAndImage(sourceFilePath);
+                                mainThumbnail = thumb;
+                                computedPixelHash = hash;
+                                cachedImageForRegions = loadedImage; // Cache for region extraction
+                                Console.WriteLine($"[THUMBNAIL] Generated for first time: {sourceFilePath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[WARNING] Thumbnail generation failed for {sourceFilePath}: {ex.Message}");
+                                LogEntry(batchId ?? 0, sourceFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
+                            }
                         }
                     }
                     // PATH 2: Thumbnail exists + No region changes - validate PixelHash with optimized load
@@ -2108,6 +2327,108 @@ static byte[]?[] ExtractRegionsToBlobBatchFromImage(MagickImage sourceImage, Lis
     });
 
     return results;
+}
+
+/// <summary>
+/// OPTIMIZED: Generates file SHA1, thumbnail, and pixel hash with minimal I/O.
+/// Computes SHA1 from raw file bytes (for integrity checking), then loads image ONCE for thumbnail + pixel hash.
+/// This reduces duplicate image decoding (was: load for thumbnail, load again for pixel hash).
+/// Returns all three artifacts needed for database storage.
+/// </summary>
+/// <param name="imagePath">Path to the source image file.</param>
+/// <param name="maxThumbSize">Maximum thumbnail dimension (default 384px).</param>
+/// <returns>Tuple of (fileSHA1, thumbnail bytes, pixelHash, loaded MagickImage for region extraction or null).</returns>
+static (string fileSHA1, byte[] thumbnail, string pixelHash, MagickImage? loadedImage) GenerateSHA1AndThumbnailCombined(string imagePath, int maxThumbSize = 384)
+{
+    try
+    {
+        // STEP 1: Compute file SHA1 from raw file bytes (for integrity checking)
+        // This MUST match the file-based SHA1 used elsewhere for change detection
+        string fileSHA1;
+        try
+        {
+            fileSHA1 = getFileSHA1(imagePath);
+        }
+        catch
+        {
+            fileSHA1 = string.Empty;
+        }
+
+        // Fast path: get image dimensions without decoding full pixels
+        var info = new MagickImageInfo(imagePath);
+        int imgWidth = (int)info.Width;
+        int imgHeight = (int)info.Height;
+
+        // STEP 2: SINGLE IMAGE LOAD for thumbnail + pixel hash operations
+        var sourceImage = new MagickImage(imagePath);
+        sourceImage.AutoOrient();
+
+        // STEP 2: Compute pixel hash from downscaled version (256px max dimension)
+        string pixelHash;
+        try
+        {
+            int hashMaxDim = Math.Max(imgWidth, imgHeight);
+            int hashSize = Math.Min(hashMaxDim, 256);
+            double hashScale = hashMaxDim > 0 ? (double)hashSize / hashMaxDim : 1.0;
+            int hashW = Math.Max((int)Math.Round(imgWidth * hashScale), 1);
+            int hashH = Math.Max((int)Math.Round(imgHeight * hashScale), 1);
+
+            using (var imgHash = (MagickImage)sourceImage.Clone())
+            {
+                imgHash.Resize((uint)hashW, (uint)hashH);
+                imgHash.Strip();
+                byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
+                using (SHA1 sha = SHA1.Create())
+                {
+                    byte[] checksum = sha.ComputeHash(pixelData);
+                    pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
+                }
+            }
+        }
+        catch
+        {
+            pixelHash = string.Empty;
+        }
+
+        // STEP 3: Generate main thumbnail
+        byte[] mainThumbnail;
+        try
+        {
+            int maxDim = Math.Max(imgWidth, imgHeight);
+            int newW = imgWidth;
+            int newH = imgHeight;
+            if (maxDim > maxThumbSize)
+            {
+                double scale = (double)maxThumbSize / maxDim;
+                newW = Math.Max((int)Math.Round(imgWidth * scale), 1);
+                newH = Math.Max((int)Math.Round(imgHeight * scale), 1);
+            }
+
+            using (var mainThumb = (MagickImage)sourceImage.Clone())
+            {
+                if (maxDim > maxThumbSize)
+                {
+                    mainThumb.Resize((uint)newW, (uint)newH);
+                }
+                mainThumb.Page = new MagickGeometry(0, 0, (uint)mainThumb.Width, (uint)mainThumb.Height);
+                mainThumb.Format = MagickFormat.WebP;
+                mainThumb.Quality = 60;
+                mainThumbnail = mainThumb.ToByteArray();
+            }
+        }
+        catch
+        {
+            mainThumbnail = Array.Empty<byte>();
+        }
+
+        // Return loaded image for potential region extraction (caller owns disposal)
+        return (fileSHA1, mainThumbnail, pixelHash, sourceImage);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[WARNING] Combined generation failed for {imagePath}: {ex.Message}");
+        return (string.Empty, Array.Empty<byte>(), string.Empty, null);
+    }
 }
 
 /// <summary>
