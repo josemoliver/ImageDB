@@ -36,6 +36,31 @@ namespace ImageDB
             dbFiles.SaveChanges();
         }
 
+        public async Task<List<Region>> GetExistingRegions(int imageId)
+        {
+            // Retrieve all existing regions for comparison
+            return dbFiles.Regions
+                .Where(r => r.ImageId == imageId)
+                .ToList();
+        }
+
+        public async Task DeleteRegionsExcept(int imageId, List<int> regionIdsToKeep)
+        {
+            // Delete regions that are not in the keep list
+            var regionsToDelete = dbFiles.Regions
+                .Where(r => r.ImageId == imageId && !regionIdsToKeep.Contains(r.RegionId))
+                .ToList();
+
+            if (regionsToDelete.Count > 0)
+            {
+                foreach (var region in regionsToDelete)
+                {
+                    dbFiles.Regions.Remove(region);
+                }
+                dbFiles.SaveChanges();
+            }
+        }
+
         public async Task DeleteCollections(int imageId)
         {
             // Delete all collections for the given imageId
@@ -94,7 +119,7 @@ namespace ImageDB
             dbFiles.SaveChanges();
         }
 
-        public async Task AddRegion(int imageId, string? regionName, string? regionType, string? regionAreaUnit, string? regionAreaH, string? regionAreaW, string? regionAreaX, string? regionAreaY, string? regionAreaD, byte[] regionThumbnail)
+        public async Task<int> AddRegion(int imageId, string? regionName, string? regionType, string? regionAreaUnit, string? regionAreaH, string? regionAreaW, string? regionAreaX, string? regionAreaY, string? regionAreaD, byte[] regionThumbnail)
         {
             regionName = regionName?.Trim();
             regionAreaUnit = regionAreaUnit?.Trim();
@@ -128,6 +153,19 @@ namespace ImageDB
 
             dbFiles.Regions.Add(region);
             await dbFiles.SaveChangesAsync();
+            return region.RegionId;
+        }
+
+        public static bool RegionCoordinatesMatch(Region existingRegion, decimal? h, decimal? w, decimal? x, decimal? y, decimal? d)
+        {
+            // Compare region coordinates with tolerance for floating point comparison
+            const decimal tolerance = 0.000001m;
+            
+            return Math.Abs((existingRegion.RegionAreaH ?? 0) - (h ?? 0)) < tolerance &&
+                   Math.Abs((existingRegion.RegionAreaW ?? 0) - (w ?? 0)) < tolerance &&
+                   Math.Abs((existingRegion.RegionAreaX ?? 0) - (x ?? 0)) < tolerance &&
+                   Math.Abs((existingRegion.RegionAreaY ?? 0) - (y ?? 0)) < tolerance &&
+                   Math.Abs((existingRegion.RegionAreaD ?? 0) - (d ?? 0)) < tolerance;
         }
 
         public async Task AddCollection(int imageId, string? collectionName, string? collectionURI)

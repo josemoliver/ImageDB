@@ -852,4 +852,8 @@ DROP INDEX IF EXISTS "idx_metadata_history_image_id";
 CREATE INDEX "idx_metadata_history_image_id" ON "MetadataHistory" (
 	"ImageId"
 );
+DROP INDEX IF EXISTS "idx_region_imageid";
+CREATE INDEX "idx_region_imageid" ON "Region" (
+	"ImageId"
+);
 COMMIT;

@@ -629,6 +629,11 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
                     imageThumbnail = null;
                 }
             }
+            else if (image.Thumbnail != null && image.Thumbnail.Length > 0)
+            {
+                // Existing thumbnail preserved (PixelHash would match or thumbnail was manually generated)
+                Console.WriteLine($"[THUMBNAIL] Preserved existing thumbnail: {specificFilePath}");
+            }
             // Note: For existing thumbnails, we preserve them on metadata-only updates
             // User can force regeneration by deleting thumbnails (SET Thumbnail=NULL)
 
@@ -1030,9 +1035,13 @@ static async Task ProcessDescriptiveTags(CDatabaseImageDBsqliteContext dbFiles, 
 /// </summary>
 static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles, int imageID, string structJsonMetadata, string sourceFile, bool generateRegionThumbnails)
 {
-    // Delete existing regions and collections.
     var mwgStruct = new StructService(dbFiles);
-    await mwgStruct.DeleteRegions(imageID);
+    
+    // Get existing regions for comparison (before deleting)
+    var existingRegions = await mwgStruct.GetExistingRegions(imageID);
+    var regionIdsToKeep = new List<int>();
+    
+    // Delete collections and persons (always regenerated)
     await mwgStruct.DeleteCollections(imageID);
     await mwgStruct.DeletePersons(imageID);
 
@@ -1045,29 +1054,60 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
 
             if (structMeta != null)
             {
-                // Add Regions
+                // Add Regions with smart thumbnail reuse
                 try
                 {
                     if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
                     {
                         foreach (var reg in structMeta.RegionInfo.RegionList)
                         {
-                            byte[]? webpRegionBlob = null;
-
-                            if (generateRegionThumbnails == true)
+                            // Parse region coordinates for comparison
+                            decimal? h = decimal.TryParse(reg.Area.H, out var hVal) ? hVal : null;
+                            decimal? w = decimal.TryParse(reg.Area.W, out var wVal) ? wVal : null;
+                            decimal? x = decimal.TryParse(reg.Area.X, out var xVal) ? xVal : null;
+                            decimal? y = decimal.TryParse(reg.Area.Y, out var yVal) ? yVal : null;
+                            decimal? d = decimal.TryParse(reg.Area.D, out var dVal) ? dVal : null;
+                            
+                            // Check if this exact region already exists
+                            var matchingRegion = existingRegions.FirstOrDefault(r => 
+                                StructService.RegionCoordinatesMatch(r, h, w, x, y, d) &&
+                                r.RegionName == reg.Name?.Trim() &&
+                                r.RegionType == reg.Type?.Trim() &&
+                                r.RegionAreaUnit == reg.Area.Unit?.Trim());
+                            
+                            if (matchingRegion != null && matchingRegion.RegionThumbnail != null && matchingRegion.RegionThumbnail.Length > 0)
                             {
-                                webpRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                                // Region exists with thumbnail - keep it
+                                regionIdsToKeep.Add(matchingRegion.RegionId);
+                                Console.WriteLine($"[REGION] Preserved existing thumbnail for region: {reg.Name}");
                             }
+                            else
+                            {
+                                // New region or coordinates changed - generate thumbnail
+                                byte[]? webpRegionBlob = null;
 
-                            await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob);
+                                if (generateRegionThumbnails == true)
+                                {
+                                    webpRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
+                                    Console.WriteLine($"[REGION] Generated new thumbnail for region: {reg.Name}");
+                                }
+
+                                int newRegionId = await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob);
+                                regionIdsToKeep.Add(newRegionId);
+                            }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     // Handle the exception - Log the error message
-                    Console.WriteLine("[ERROR] - Failed to add region: " + ex.Message);
+                    Console.WriteLine("[ERROR] - Failed to process region: " + ex.Message);
                     LogEntry(0, sourceFile, "[Unable to read MWG Region] - " + ex.ToString());
+                }
+                finally
+                {
+                    // Delete regions that weren't matched or added
+                    await mwgStruct.DeleteRegionsExcept(imageID, regionIdsToKeep);
                 }
 
                 // Add Collections
