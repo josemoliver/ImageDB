@@ -351,6 +351,83 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
         
         Console.WriteLine("[BATCH] - Started job # "+ batchID+" (" + imageFiles.Count + " files found.)");
 
+        // PERFORMANCE OPTIMIZATION: Pre-compute SHA1 hashes in parallel
+        var sha1Cache = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        
+        if (dateScan == false)
+        {
+            // Normal mode: Pre-compute SHA1 for all files in parallel (needed for comparison)
+            Console.WriteLine("[SHA1] Pre-computing hashes in parallel...");
+            
+            int totalFiles = imageFiles.Count;
+            int processedFiles = 0;
+            var progressLock = new object();
+            
+            System.Threading.Tasks.Parallel.ForEach(imageFiles, 
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                imageFile =>
+                {
+                    try
+                    {
+                        string hash = getFileSHA1(imageFile.FilePath);
+                        sha1Cache[imageFile.FilePath] = hash;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                        sha1Cache[imageFile.FilePath] = string.Empty;
+                    }
+                    
+                    // Update progress
+                    lock (progressLock)
+                    {
+                        processedFiles++;
+                        int percentage = (int)((double)processedFiles / totalFiles * 100);
+                        Console.Write($"\r[SHA1] Progress: {processedFiles}/{totalFiles} ({percentage}%)");
+                    }
+                });
+            Console.WriteLine($"\n[SHA1] Computed {sha1Cache.Count} hashes.");
+        }
+        else
+        {
+            // Date/Quick mode: Only pre-compute SHA1 for new files (not in DB yet)
+            var newFiles = imageFiles.Where(f => !existingImages.ContainsKey(f.FilePath)).ToList();
+            
+            if (newFiles.Count > 0)
+            {
+                Console.WriteLine($"[SHA1] Pre-computing hashes for {newFiles.Count} new files in parallel...");
+                
+                int totalNewFiles = newFiles.Count;
+                int processedNewFiles = 0;
+                var progressLock = new object();
+                
+                System.Threading.Tasks.Parallel.ForEach(newFiles,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    imageFile =>
+                    {
+                        try
+                        {
+                            string hash = getFileSHA1(imageFile.FilePath);
+                            sha1Cache[imageFile.FilePath] = hash;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                            sha1Cache[imageFile.FilePath] = string.Empty;
+                        }
+                        
+                        // Update progress
+                        lock (progressLock)
+                        {
+                            processedNewFiles++;
+                            int percentage = (int)((double)processedNewFiles / totalNewFiles * 100);
+                            Console.Write($"\r[SHA1] Progress: {processedNewFiles}/{totalNewFiles} ({percentage}%)");
+                        }
+                    });
+                Console.WriteLine($"\n[SHA1] Computed {sha1Cache.Count} hashes for new files.");
+            }
+        }
+
         // Iterate over each image file
         for (int i = 0; i < imageFiles.Count; i++)
         {
@@ -371,7 +448,8 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
             if (!fileExistsInDb)
             {
                 // File was not found in db, add it
-                SHA1 = getFileSHA1(imageFiles[i].FilePath);        
+                // Use pre-computed SHA1 from cache (already computed in parallel)
+                SHA1 = sha1Cache.TryGetValue(imageFiles[i].FilePath, out var cachedHash) ? cachedHash : getFileSHA1(imageFiles[i].FilePath);
                 Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
                 try
                 {
@@ -394,7 +472,8 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
 
                 if (dateScan == false)
                 {
-                    SHA1 = getFileSHA1(imageFiles[i].FilePath);
+                    // Use pre-computed SHA1 from cache (already computed in parallel)
+                    SHA1 = sha1Cache.TryGetValue(imageFiles[i].FilePath, out var cachedHash) ? cachedHash : getFileSHA1(imageFiles[i].FilePath);
                     imageSHA1 = existingImage.Sha1 ?? string.Empty;
                 }
                 else
