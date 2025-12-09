@@ -228,9 +228,13 @@ SELECT
     (1.645 * sqrt(AVG(Distance*Distance) - AVG(Distance)*AVG(Distance))) AS Radius
 FROM Distances
 GROUP BY Location, City, StateProvince, Country, Album, PhotoLibraryId;
+DROP VIEW IF EXISTS "vCameraUsage";
+CREATE VIEW vCameraUsage AS SELECT Device, COUNT(*) AS Count FROM Image WHERE Device IS NOT NULL AND Device <> '' GROUP BY Device ORDER BY Count DESC;
 DROP VIEW IF EXISTS "vCollections";
 CREATE VIEW vCollections AS
 SELECT CollectionName, CollectionURI, Count (CollectionId) AS GroupingCount FROM Collection GROUP BY CollectionName, CollectionURI ORDER BY CollectionName, CollectionURI;
+DROP VIEW IF EXISTS "vCountryDistribution";
+CREATE VIEW vCountryDistribution AS SELECT Country, CountryCode, COUNT(*) AS Count FROM Image GROUP BY Country, CountryCode ORDER BY Count DESC;
 DROP VIEW IF EXISTS "vCreator";
 CREATE VIEW vCreator AS
 SELECT ImageId,Filepath, 
@@ -334,6 +338,8 @@ SELECT LOWER(Filename) AS Filename, COUNT(*)
 FROM Image
 GROUP BY LOWER(Filename)
 HAVING COUNT(*) > 1;
+DROP VIEW IF EXISTS "vDuplicateSHA1";
+CREATE VIEW vDuplicateSHA1 AS SELECT Sha1, COUNT(*) AS Cnt FROM Image WHERE Sha1 IS NOT NULL AND Sha1 <> '' GROUP BY Sha1 HAVING COUNT(*) > 1;
 DROP VIEW IF EXISTS "vExifTimeZone";
 CREATE VIEW vExifTimeZone AS
 SELECT ImageId,Filepath, DateTimeTakenTimeZone, 
@@ -523,6 +529,8 @@ json_extract(Metadata, '$.IFD0:XPAuthor') AS XPAuthor,
 json_extract(Metadata, '$.IFD0:XPKeywords') AS XPKeywords,
 Metadata
 FROM Image;
+DROP VIEW IF EXISTS "vLegacyXPOnly";
+CREATE VIEW vLegacyXPOnly AS SELECT ImageId, Filepath FROM Image WHERE (json_extract(Metadata,'$.\"IFD0:XPTitle\"') IS NOT NULL OR json_extract(Metadata,'$.\"IFD0:XPComment\"') IS NOT NULL OR json_extract(Metadata,'$.\"IFD0:XPKeywords\"') IS NOT NULL) AND (json_extract(Metadata,'$.\"XMP-dc:Title\"') IS NULL AND json_extract(Metadata,'$.\"IPTC:ObjectName\"') IS NULL AND json_extract(Metadata,'$.\"XMP-dc:Description\"') IS NULL AND json_extract(Metadata,'$.\"IPTC:Caption-Abstract\"') IS NULL AND json_extract(Metadata,'$.\"XMP-dc:Subject\"') IS NULL);
 DROP VIEW IF EXISTS "vLegacy_IPTC_IMM";
 CREATE VIEW vLegacy_IPTC_IMM AS
 SELECT ImageId,Filepath, 
@@ -616,11 +624,15 @@ WHERE
     AND i.RecordModified IS NOT NULL
 ORDER BY
     i.RecordModified DESC;
+DROP VIEW IF EXISTS "vMissingDateTimeTaken";
+CREATE VIEW vMissingDateTimeTaken AS SELECT ImageId, Filepath FROM Image WHERE DateTimeTaken IS NULL OR DateTimeTaken = '';
 DROP VIEW IF EXISTS "vMissingGeotags";
 CREATE VIEW vMissingGeotags AS
 SELECT Filepath, Latitude,Longitude Location,StateProvince,Country,City
 FROM Image
 WHERE length(Location)=0 AND length(StateProvince)=0 AND length(Country)=0 AND length(City)=0;
+DROP VIEW IF EXISTS "vMissingKeywords";
+CREATE VIEW vMissingKeywords AS SELECT i.ImageId, i.Filepath FROM Image i LEFT JOIN relationTag rt ON rt.ImageId = i.ImageId WHERE rt.ImageId IS NULL;
 DROP VIEW IF EXISTS "vMonthlyPhotosTaken";
 CREATE VIEW vMonthlyPhotosTaken AS
 SELECT
@@ -669,6 +681,8 @@ GROUP BY
     PeopleTag.PersonName
 ORDER BY 
     PeopleTagCount DESC;
+DROP VIEW IF EXISTS "vPeopleTagCoverage";
+CREATE VIEW vPeopleTagCoverage AS SELECT SUBSTR(i.DateTimeTaken,1,4) AS Year, SUM(CASE WHEN rpt.ImageId IS NULL THEN 0 ELSE 1 END) AS WithPeople, COUNT(*) AS Total FROM Image i LEFT JOIN relationPeopleTag rpt ON rpt.ImageId = i.ImageId GROUP BY Year;
 DROP VIEW IF EXISTS "vPeopleTagRegionCountDiff";
 CREATE VIEW vPeopleTagRegionCountDiff AS
 SELECT i.ImageId,i.Filepath,i.Filename, i.StuctMetadata, peopleTagCount, regionCount
@@ -762,6 +776,10 @@ CREATE VIEW vRegionMismatch AS
 SELECT *
 FROM vFileDimensions
 WHERE (FileWidth<>RWidth OR FileHeight<>RHeight) AND (FileWidth<>RHeight OR FileHeight<>RWidth);
+DROP VIEW IF EXISTS "vRegionThumbsMissing";
+CREATE VIEW vRegionThumbsMissing AS SELECT RegionId, ImageId, RegionName FROM Region WHERE RegionThumbnail IS NULL;
+DROP VIEW IF EXISTS "vRegionWithoutPersons";
+CREATE VIEW vRegionWithoutPersons AS SELECT r.RegionId, r.ImageId, r.RegionName FROM Region r LEFT JOIN relationPeopleTag rpt ON rpt.ImageId = r.ImageId WHERE rpt.ImageId IS NULL;
 DROP VIEW IF EXISTS "vRights";
 CREATE VIEW vRights AS
 SELECT ImageId,Filepath, 

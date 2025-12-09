@@ -1715,7 +1715,10 @@ static string NormalizePathCase(string folderPath)
 
 static string getFileSHA1(string filepath)
 {
-    using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, FileReadBufferSize))
+    const int bufferSize = 64 * 1024; // 64KB for improved throughput
+    var options = FileOptions.SequentialScan | FileOptions.Asynchronous;
+
+    using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, options))
     using (SHA1 sha = SHA1.Create())
     {
         byte[] checksum = sha.ComputeHash(stream);
@@ -1832,97 +1835,75 @@ static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, s
 
 static (byte[] thumbnail, string pixelHash) ImageToThumbnailBlobWithHash(string imagePath, int maxThumbSize = 384)
 {
-    using var img = new MagickImage(imagePath);
+    // Fast path: get image dimensions without decoding pixels
+    var info = new MagickImageInfo(imagePath);
+    int imgWidth = (int)info.Width;
+    int imgHeight = (int)info.Height;
 
-    int imgWidth = (int)img.Width;
-    int imgHeight = (int)img.Height;
-    
-    // Compute pixel hash BEFORE orientation/resizing (on original decoded pixels)
-    // Optimization: Use smaller thumbnail for hash instead of full-size RGB (60-90% faster)
+    // Compute pixel hash on a small decode (pre-orientation)
     string pixelHash = string.Empty;
     try
     {
-        // Create a small normalized version for hashing (256px max dimension)
         int hashMaxDim = Math.Max(imgWidth, imgHeight);
-        int hashSize = Math.Min(hashMaxDim, 256); // Hash on 256px version (good balance)
-        
-        if (hashMaxDim > hashSize)
+        int hashSize = Math.Min(hashMaxDim, 256); // Hash on ~256px max dimension
+        double hashScale = hashMaxDim > 0 ? (double)hashSize / hashMaxDim : 1.0;
+        int hashW = Math.Max((int)Math.Round(imgWidth * hashScale), 1);
+        int hashH = Math.Max((int)Math.Round(imgHeight * hashScale), 1);
+
+        var hashSettings = new MagickReadSettings
         {
-            double hashScale = (double)hashSize / hashMaxDim;
-            int hashW = (int)Math.Round(imgWidth * hashScale);
-            int hashH = (int)Math.Round(imgHeight * hashScale);
-            
-            // Resize in-place (modifies img buffer temporarily)
-            img.Resize(new MagickGeometry((uint)Math.Max(hashW, 1), (uint)Math.Max(hashH, 1))
+            Width = hashW,
+            Height = hashH,
+            IgnoreWarnings = true,
+        };
+
+        using (var imgHash = new MagickImage(imagePath, hashSettings))
+        {
+            // Strip metadata and hash compact RGB buffer
+            imgHash.Strip();
+            byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
+            using (SHA1 sha = SHA1.Create())
             {
-                IgnoreAspectRatio = false
-            });
+                byte[] checksum = sha.ComputeHash(pixelData);
+                pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
+            }
         }
-        
-        // Strip metadata and hash the resized pixel data (much smaller than original)
-        img.Strip();
-        byte[] pixelData = img.ToByteArray(MagickFormat.Rgb);
-        
-        using (SHA1 sha = SHA1.Create())
-        {
-            byte[] checksum = sha.ComputeHash(pixelData);
-            // Optimization: Use StringBuilder or direct hex conversion (faster than Replace)
-            pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
-        }
-        
-        // Reload original image for thumbnail generation
-        img.Read(imagePath);
     }
     catch
     {
-        // If pixel hash fails, reload image and continue with thumbnail generation
-        try { img.Read(imagePath); } catch { /* Already loaded or unrecoverable */ }
         pixelHash = string.Empty;
     }
 
-    // Apply EXIF orientation for thumbnail (after hashing)
-    img.AutoOrient();
-    
-    imgWidth = (int)img.Width;
-    imgHeight = (int)img.Height;
-
-    //
-    // Compute proper thumbnail dimensions (preserving aspect ratio)
-    //
+    // Compute thumbnail target size (preserve aspect ratio)
     int maxDim = Math.Max(imgWidth, imgHeight);
     int newW = imgWidth;
     int newH = imgHeight;
-
-    // Only resize if image exceeds max thumbnail size
     if (maxDim > maxThumbSize)
     {
         double scale = (double)maxThumbSize / maxDim;
-        newW = (int)Math.Round(imgWidth * scale);
-        newH = (int)Math.Round(imgHeight * scale);
+        newW = Math.Max((int)Math.Round(imgWidth * scale), 1);
+        newH = Math.Max((int)Math.Round(imgHeight * scale), 1);
     }
 
-    //
-    // Resize internal image buffer
-    //
-    img.Resize(new MagickGeometry((uint)Math.Max(newW, 1), (uint)Math.Max(newH, 1))
+    // Decode directly at target thumbnail size for speed
+    var thumbSettings = new MagickReadSettings
     {
-        IgnoreAspectRatio = false
-    });
+        Width = newW,
+        Height = newH,
+        IgnoreWarnings = true,
+    };
+    using var img = new MagickImage(imagePath, thumbSettings);
 
-    //
+    // Apply EXIF orientation for thumbnail
+    img.AutoOrient();
+
     // Reset page offset (replacement for RePage)
-    //
     img.Page = new MagickGeometry(0, 0, (uint)img.Width, (uint)img.Height);
 
-    //
-    // Encode as WebP
-    //
+    // Encode as WebP (lightweight)
     img.Format = MagickFormat.WebP;
-    img.Quality = 60;   // lightweight thumbnail—tweak as needed
+    img.Quality = 60;
 
-    //
-    // Return blob and pixel hash
-    //
     return (img.ToByteArray(), pixelHash);
 }
 
