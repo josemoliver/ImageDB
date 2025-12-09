@@ -1117,7 +1117,7 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
                             if (cachedImage != null)
                             {
                                 batchThumbnails = ExtractRegionsToBlobBatchFromImage(cachedImage, regionCoords);
-                                Console.WriteLine($"[REGION] Batch generated {regionsNeedingThumbs.Count} thumbnails using cached image (NEW IMAGE PATH)");
+                                Console.WriteLine($"[REGION] Batch generated {regionsNeedingThumbs.Count} thumbnails using cached image.");
                                 cachedImage.Dispose();
                                 cachedImage = null;
                             }
@@ -1908,85 +1908,6 @@ static async Task CopyImageToMetadataHistory(int imageId)
 
 
 /// <summary>
-/// Generates main thumbnail with pixel hash AND face region thumbnails in a single image load.
-/// MOST EFFICIENT: Use when processing new images that have face regions (eliminates duplicate file I/O).
-/// </summary>
-/// <param name="imagePath">Path to the source image file.</param>
-/// <param name="regions">List of MWG region coordinates (h, w, x, y); pass empty list for thumbnail-only.</param>
-/// <param name="maxThumbSize">Maximum dimension for thumbnails (default 384px).</param>
-/// <returns>Tuple: (main thumbnail bytes, pixel hash, array of region thumbnail bytes).</returns>
-static (byte[] mainThumbnail, string pixelHash, byte[]?[] regionThumbnails) GenerateAllThumbnailsWithHash(
-    string imagePath, 
-    List<(string h, string w, string x, string y)> regions, 
-    int maxThumbSize = 384)
-{
-    // Fast path: get image dimensions without decoding pixels
-    var info = new MagickImageInfo(imagePath);
-    int imgWidth = (int)info.Width;
-    int imgHeight = (int)info.Height;
-
-    // Load image ONCE for ALL operations (main thumbnail + pixel hash + region thumbnails)
-    using var sourceImage = new MagickImage(imagePath);
-    sourceImage.AutoOrient(); // Apply EXIF orientation once
-
-    // Step 1: Compute pixel hash from a downscaled version
-    string pixelHash = string.Empty;
-    try
-    {
-        int hashMaxDim = Math.Max(imgWidth, imgHeight);
-        int hashSize = Math.Min(hashMaxDim, 256);
-        double hashScale = hashMaxDim > 0 ? (double)hashSize / hashMaxDim : 1.0;
-        int hashW = Math.Max((int)Math.Round(imgWidth * hashScale), 1);
-        int hashH = Math.Max((int)Math.Round(imgHeight * hashScale), 1);
-
-        using (var imgHash = (MagickImage)sourceImage.Clone())
-        {
-            imgHash.Resize((uint)hashW, (uint)hashH);
-            imgHash.Strip();
-            byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
-            using (SHA1 sha = SHA1.Create())
-            {
-                byte[] checksum = sha.ComputeHash(pixelData);
-                pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
-            }
-        }
-    }
-    catch
-    {
-        pixelHash = string.Empty;
-    }
-
-    // Step 2: Generate main thumbnail
-    byte[] mainThumbnail;
-    int maxDim = Math.Max(imgWidth, imgHeight);
-    int newW = imgWidth;
-    int newH = imgHeight;
-    if (maxDim > maxThumbSize)
-    {
-        double scale = (double)maxThumbSize / maxDim;
-        newW = Math.Max((int)Math.Round(imgWidth * scale), 1);
-        newH = Math.Max((int)Math.Round(imgHeight * scale), 1);
-    }
-
-    using (var mainThumb = (MagickImage)sourceImage.Clone())
-    {
-        if (maxDim > maxThumbSize)
-        {
-            mainThumb.Resize((uint)newW, (uint)newH);
-        }
-        mainThumb.Page = new MagickGeometry(0, 0, (uint)mainThumb.Width, (uint)mainThumb.Height);
-        mainThumb.Format = MagickFormat.WebP;
-        mainThumb.Quality = 60;
-        mainThumbnail = mainThumb.ToByteArray();
-    }
-
-    // Step 3: Extract all region thumbnails (if any) using parallel processing
-    byte[]?[] regionThumbnails = ExtractRegionsToBlobBatchFromImage(sourceImage, regions, maxThumbSize);
-
-    return (mainThumbnail, pixelHash, regionThumbnails);
-}
-
-/// <summary>
 /// Extracts region thumbnails from a pre-loaded MagickImage (optimized for reuse).
 /// </summary>
 /// <param name="sourceImage">Pre-loaded and oriented MagickImage.</param>
@@ -2224,17 +2145,6 @@ static (byte[] thumbnail, string pixelHash, MagickImage? loadedImage) ImageToThu
     }
 
     return (mainThumbnail, pixelHash, sourceImage);
-}
-
-/// <summary>
-/// Generates main thumbnail with pixel hash (backward compatible wrapper).
-/// For new images with face regions, use GenerateAllThumbnailsWithHash() to avoid loading image twice.
-/// </summary>
-static (byte[] thumbnail, string pixelHash) ImageToThumbnailBlobWithHash(string imagePath, int maxThumbSize = 384)
-{
-    var (thumb, hash, img) = ImageToThumbnailBlobWithHashAndImage(imagePath, maxThumbSize);
-    img?.Dispose();
-    return (thumb, hash);
 }
 
 
