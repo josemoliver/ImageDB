@@ -1852,13 +1852,14 @@ static (byte[] thumbnail, string pixelHash) ImageToThumbnailBlobWithHash(string 
 
         var hashSettings = new MagickReadSettings
         {
-            Width = hashW,
-            Height = hashH,
-            IgnoreWarnings = true,
+            Width = (uint)hashW,
+            Height = (uint)hashH,
         };
 
         using (var imgHash = new MagickImage(imagePath, hashSettings))
         {
+            // Apply orientation correction before hashing to ensure consistency
+            imgHash.AutoOrient();
             // Strip metadata and hash compact RGB buffer
             imgHash.Strip();
             byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
@@ -1888,9 +1889,8 @@ static (byte[] thumbnail, string pixelHash) ImageToThumbnailBlobWithHash(string 
     // Decode directly at target thumbnail size for speed
     var thumbSettings = new MagickReadSettings
     {
-        Width = newW,
-        Height = newH,
-        IgnoreWarnings = true,
+        Width = (uint)newW,
+        Height = (uint)newH,
     };
     using var img = new MagickImage(imagePath, thumbSettings);
 
