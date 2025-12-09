@@ -15,6 +15,10 @@ namespace ImageDB
         private static StreamReader? exiftoolOutput;
         private static readonly object exiftoolLock = new();
         private const string ReadyMarker = "{ready}";
+        
+        // Reusable StringBuilder to avoid allocations (not thread-safe but protected by lock)
+        private static readonly StringBuilder commandBuilder = new StringBuilder(512);
+        private static readonly StringBuilder outputBuilder = new StringBuilder(8192);
 
         static ExifToolHelper()
         {
@@ -89,6 +93,87 @@ namespace ImageDB
             Console.WriteLine("[EXIFTOOL] - Exiftool Process Started");
         }
 
+        /// <summary>
+        /// Optimized method to get both standard and struct metadata in a single ExifTool call.
+        /// Returns tuple of (standardMetadata, structMetadata). If no regions/collections detected,
+        /// structMetadata will be empty string.
+        /// </summary>
+        public static (string standard, string structData) GetExiftoolMetadataBoth(string filepath)
+        {
+            lock (exiftoolLock)
+            {
+                try
+                {
+                    if (exiftoolProcess == null || exiftoolProcess.HasExited)
+                        StartExifTool();
+
+                    // First call: Get standard metadata with -G1
+                    commandBuilder.Clear();
+                    commandBuilder.AppendLine("-json");
+                    commandBuilder.AppendLine("-G1");
+                    commandBuilder.AppendLine("-n");
+                    commandBuilder.AppendLine(filepath);
+                    commandBuilder.AppendLine("-execute");
+
+                    exiftoolInput!.Write(commandBuilder.ToString());
+                    exiftoolInput.Flush();
+
+                    outputBuilder.Clear();
+                    string? line;
+
+                    while ((line = exiftoolOutput!.ReadLine()) != null)
+                    {
+                        if (line == ReadyMarker)
+                            break;
+                        outputBuilder.AppendLine(line);
+                    }
+
+                    string standardResult = outputBuilder.ToString().Trim();
+                    standardResult = standardResult.Trim('[', ']');
+                    standardResult = JsonConverter.ConvertNumericAndBooleanValuesToString(standardResult);
+
+                    // Check if we need struct data (optimized: check JSON keys instead of string search)
+                    string structResult = string.Empty;
+                    if (standardResult.Contains("\"XMP-mwg-rs:") || 
+                        standardResult.Contains("\"XMP-mwg-coll:") || 
+                        standardResult.Contains("\"XMP-iptcExt:PersonInImage"))
+                    {
+                        // Second call: Get struct metadata
+                        commandBuilder.Clear();
+                        commandBuilder.AppendLine("-json");
+                        commandBuilder.AppendLine("-struct");
+                        commandBuilder.AppendLine("-XMP:RegionInfo");
+                        commandBuilder.AppendLine("-XMP:Collections");
+                        commandBuilder.AppendLine("-XMP:PersonInImageWDetails");
+                        commandBuilder.AppendLine(filepath);
+                        commandBuilder.AppendLine("-execute");
+
+                        exiftoolInput.Write(commandBuilder.ToString());
+                        exiftoolInput.Flush();
+
+                        outputBuilder.Clear();
+                        while ((line = exiftoolOutput.ReadLine()) != null)
+                        {
+                            if (line == ReadyMarker)
+                                break;
+                            outputBuilder.AppendLine(line);
+                        }
+
+                        structResult = outputBuilder.ToString().Trim();
+                        structResult = structResult.Trim('[', ']');
+                        structResult = JsonConverter.ConvertNumericAndBooleanValuesToString(structResult);
+                    }
+
+                    return (standardResult, structResult);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[EXCEPTION] - " + ex.Message);
+                    return (string.Empty, string.Empty);
+                }
+            }
+        }
+
         public static string GetExiftoolMetadata(string filepath, string mode)
         {
 
@@ -99,37 +184,39 @@ namespace ImageDB
                     if (exiftoolProcess == null || exiftoolProcess.HasExited)
                         StartExifTool();
 
-                    var cmd = new StringBuilder();
+                    // Reuse StringBuilder, clear previous content
+                    commandBuilder.Clear();
 
                     // Ensure the filepath is properly quoted if it contains spaces or special characters
                     string quotedFilepath = $"\"{filepath}\"";
 
                     // Add command options
-                    cmd.AppendLine($"-json");               // JSON output
+                    commandBuilder.AppendLine($"-json");               // JSON output
 
 
-                    if (mode.ToLower()=="mwg")
+                    if (mode == "mwg")  // Direct comparison, avoid ToLower() allocation
                     {
-                        cmd.AppendLine($"-struct");                     // Structure output
-                        cmd.AppendLine($"-XMP:RegionInfo");             // MWG RegionInfo
-                        cmd.AppendLine($"-XMP:Collections");            // MWG Collections
-                        cmd.AppendLine($"-XMP:PersonInImageWDetails");  // MWG Collections
+                        commandBuilder.AppendLine($"-struct");                     // Structure output
+                        commandBuilder.AppendLine($"-XMP:RegionInfo");             // MWG RegionInfo
+                        commandBuilder.AppendLine($"-XMP:Collections");            // MWG Collections
+                        commandBuilder.AppendLine($"-XMP:PersonInImageWDetails");  // MWG Collections
                     }
                     else
                     {
-                        cmd.AppendLine($"-G1");                 // Group output by tag
+                        commandBuilder.AppendLine($"-G1");                 // Group output by tag
                     }
 
-                    cmd.AppendLine($"-n");                      // Numeric output
-                    //cmd.AppendLine($"-charset UTF8");
-                    //cmd.AppendLine($"-charset filename=UTF8");      // Filename as UTF-8
-                    cmd.AppendLine(filepath);               // File path
-                    cmd.AppendLine("-execute");             // Execute the command
+                    commandBuilder.AppendLine($"-n");                      // Numeric output
+                    //commandBuilder.AppendLine($"-charset UTF8");
+                    //commandBuilder.AppendLine($"-charset filename=UTF8");      // Filename as UTF-8
+                    commandBuilder.AppendLine(filepath);               // File path
+                    commandBuilder.AppendLine("-execute");             // Execute the command
 
-                    exiftoolInput!.Write(cmd.ToString());
+                    exiftoolInput!.Write(commandBuilder.ToString());
                     exiftoolInput.Flush();
 
-                    var outputBuilder = new StringBuilder();
+                    // Reuse StringBuilder for output
+                    outputBuilder.Clear();
                     string? line;
 
                     while ((line = exiftoolOutput!.ReadLine()) != null)

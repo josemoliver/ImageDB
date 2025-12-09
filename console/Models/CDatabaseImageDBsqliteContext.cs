@@ -11,6 +11,21 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 {
     public CDatabaseImageDBsqliteContext()
     {
+        // Ensure WAL mode and busy timeout are enabled for better concurrency.
+        try
+        {
+            // Database may not be configured yet in parameterless ctor; guard with CanConnect.
+            if (Database != null)
+            {
+                // Attempt to set PRAGMAs; failures are non-fatal.
+                Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+                Database.ExecuteSqlRaw("PRAGMA busy_timeout=3000;");
+            }
+        }
+        catch
+        {
+            // Swallow exceptions here to avoid ctor failures; context will still function.
+        }
     }
 
     public CDatabaseImageDBsqliteContext(DbContextOptions<CDatabaseImageDBsqliteContext> options)
@@ -57,6 +72,23 @@ public partial class CDatabaseImageDBsqliteContext : DbContext
 
         // Use the connection string with Sqlite
         optionsBuilder.UseSqlite(connectionString);
+
+        // After configuring provider, apply PRAGMA settings for every context instance.
+        try
+        {
+            using var conn = Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open)
+                conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA journal_mode=WAL;";
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "PRAGMA busy_timeout=3000;";
+            cmd.ExecuteNonQuery();
+        }
+        catch
+        {
+            // Non-fatal: if PRAGMAs fail (e.g., in design-time), continue without.
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

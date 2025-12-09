@@ -2,7 +2,7 @@
   "profiles": {
     "ImageDB": {
       "commandName": "Project",
-      "commandLineArgs": "\r\n"
+      "commandLineArgs": "--mode=date --folder=\"D:\\Users\\Jose\\Pictures\\Photos\\2014\"\r\n"
     }
   }
 }

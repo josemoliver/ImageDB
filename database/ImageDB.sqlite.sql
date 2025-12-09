@@ -59,6 +59,7 @@ CREATE TABLE "Image" (
 	"ModifiedBatchId"	INTEGER,
 	"DateTimeTakenSource"	TEXT,
 	"Thumbnail"	BLOB DEFAULT NULL,
+	"PixelHash"	TEXT,
 	PRIMARY KEY("ImageId" AUTOINCREMENT)
 );
 DROP TABLE IF EXISTS "Location";
@@ -843,12 +844,41 @@ DROP INDEX IF EXISTS "idx_image_filepath";
 CREATE INDEX "idx_image_filepath" ON "Image" (
 	"Filepath"
 );
+DROP INDEX IF EXISTS "idx_image_photolibrary";
+CREATE INDEX "idx_image_photolibrary" ON "Image" (
+	"PhotoLibraryId"
+);
 DROP INDEX IF EXISTS "idx_image_record_modified";
 CREATE INDEX "idx_image_record_modified" ON "Image" (
 	"RecordModified"
 );
 DROP INDEX IF EXISTS "idx_metadata_history_image_id";
 CREATE INDEX "idx_metadata_history_image_id" ON "MetadataHistory" (
+	"ImageId"
+);
+DROP INDEX IF EXISTS "idx_region_coordinates";
+CREATE INDEX "idx_region_coordinates" ON "Region" (
+	"ImageId",
+	"RegionAreaH",
+	"RegionAreaW",
+	"RegionAreaX",
+	"RegionAreaY"
+);
+DROP INDEX IF EXISTS "idx_region_imageid";
+CREATE INDEX "idx_region_imageid" ON "Region" (
+	"ImageId"
+);
+DROP INDEX IF EXISTS "idx_region_name";
+CREATE INDEX "idx_region_name" ON "Region" (
+	"ImageId",
+	"RegionName"
+);
+DROP INDEX IF EXISTS "idx_relationpeopletag_imageid";
+CREATE INDEX "idx_relationpeopletag_imageid" ON "relationPeopleTag" (
+	"ImageId"
+);
+DROP INDEX IF EXISTS "idx_relationtag_imageid";
+CREATE INDEX "idx_relationtag_imageid" ON "relationTag" (
 	"ImageId"
 );
 COMMIT;

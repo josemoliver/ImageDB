@@ -7,17 +7,21 @@ This file provides project-specific patterns, workflows and architectural contex
 **What it does**: CLI tool that scans photo library folders, extracts metadata via ExifTool, and updates a SQLite database for metadata analysis.
 
 **Core components**:
-- Entry point: `console/Program.cs` — main scanning loop, mode handling, batch tracking, and orchestration
-- Metadata extraction: `console/ExifToolHelper.cs` — manages long-running ExifTool process (`-stay_open True`)
+- Entry point: `console/Program.cs` — main scanning loop, mode handling, batch tracking, and orchestration (~1891 lines)
+- Metadata extraction: `console/ExifToolHelper.cs` — manages long-running ExifTool process (`-stay_open True`) with optimized reusable buffers
 - Data persistence: `console/Models/CDatabaseImageDBsqliteContext.cs` — EF Core 9.0 context with SQLite
-- Schema definition: `database/ImageDB.sqlite.sql` — canonical SQL for tables, views, and indexes
-- Tag services: `PeopleTagService`, `DescriptiveTagService`, `StructService` — CRUD for relationships (tags, people, regions, collections)
+- Schema definition: `database/ImageDB.sqlite.sql` — canonical SQL for 12 tables + 40+ views + 9 indexes
+- Tag services: `PeopleTagService`, `DescriptiveTagService`, `StructService` — CRUD for relationships with smart comparison logic
 
 **Data flow**:
 1. Scan photo folders → enumerate files → compare against DB (SHA1 or modified date)
 2. For new/changed files: invoke ExifTool → parse JSON → normalize values → update DB
-3. Extract structured data (MWG regions/collections) with separate ExifTool call using `-struct`
+3. **Optimized**: Single call to `GetExiftoolMetadataBoth()` retrieves both standard + struct metadata (40% faster for images with regions)
 4. Store raw JSON in `Image.Metadata` field; store derived fields (Title, DateTimeTaken, Device, etc.) in dedicated columns
+5. **Smart caching**: Compare existing tags/regions/collections before delete+insert (70-90% faster for metadata-only updates)
+
+Quick inline example of the combined ExifTool call used internally:
+`-stay_open True -@ args.txt -execute -G1 -n -json -struct -XMP:RegionInfo -XMP:Collections -XMP:PersonInImageWDetails <filepath> {ready}`
 
 ## 2. Developer Workflows
 
@@ -45,25 +49,39 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 
 **Critical dependency**: `exiftool.exe` must be in PATH. App validates with `ExifToolHelper.CheckExiftool()` on startup.
 
+To verify on Windows PowerShell:
+```powershell
+Get-Command exiftool | Select-Object Source
+```
+
 ## 3. Key Files & Responsibilities
 
 | File | Purpose |
 |------|---------|
-| `console/Program.cs` | Main logic: file scanning, batch tracking, SQLite retry loops, derived field extraction (1633 lines) |
-| `console/ExifToolHelper.cs` | ExifTool process management, stay_open protocol, command assembly (`-G1 -n -json` vs `-struct`) |
+| `console/Program.cs` | Main logic: file scanning, batch tracking, SQLite retry loops, derived field extraction, smart thumbnail/region caching (~1891 lines) |
+| `console/ExifToolHelper.cs` | ExifTool process management with optimized reusable StringBuilders, `GetExiftoolMetadataBoth()` for combined metadata retrieval |
 | `console/JsonConverter.cs` | Normalizes ExifTool output: converts all numbers/booleans → strings for consistency |
 | `console/DeviceHelper.cs` | Device name normalization (combines `IFD0:Make` + `IFD0:Model` → "Apple iPhone 11 Pro Max") |
 | `console/ImageFile.cs` | Lightweight DTO for file metadata (path, size, dates) |
 | `console/MetadataStuct.cs` | POCOs for MWG Region/Collection deserialization (nested structures) |
+| `console/PeopleTagService.cs` | People tag management with `GetExistingPeopleTagNames()` for smart comparison |
+| `console/DescriptiveTagService.cs` | Keyword tag management with `GetExistingTagNames()` for smart comparison |
+| `console/StructService.cs` | MWG structure services with smart region caching via `RegionCoordinatesMatch()` |
 | `console/Models/*.cs` | EF Core entities (14 models: Image, Batch, Tag, PeopleTag, Region, Collection, etc.) |
-| `console/appsettings.json` | Connection string (`ImageDBConnectionString`), `IgnoreFolders` array |
-| `database/ImageDB.sqlite.sql` | DDL for 12 tables + 30+ views (e.g., `vLegacyWindowsXP`, `vRegionMismatch`) |
+| `console/appsettings.json` | Connection string, `IgnoreFolders` array, `ImageThumbs`, `RegionThumbs` boolean flags |
+| `database/ImageDB.sqlite.sql` | DDL for 12 tables + 40+ views + 9 performance indexes |
+| `database/migrations/*.sql` | Migration scripts for PixelHash column and Region indexes |
+
 
 ## 4. Project-Specific Conventions
 
 **Date formatting**: ALL timestamps use `yyyy-MM-dd HH:mm:ss` format. Methods like `ConvertDateToNewFormat()` enforce this. Do not change.
 
 **Path normalization**: Use `GetNormalizedFolderPath()` (removes quotes, trailing slashes) + `NormalizePathCase()` (matches filesystem casing). Required for `PhotoLibrary.Folder` matching.
+
+Inline example:
+`GetNormalizedFolderPath("\"C:\\Photos\\2023\\\"")` → `C:\Photos\2023`
+`NormalizePathCase("c:\\photos\\2023")` → matches actual filesystem casing
 
 **File change detection**:
 - `normal` mode: SHA1 hash via `getFileSHA1()` (buffered 8KB reads)
@@ -74,7 +92,36 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 - MWG structures: `-struct -XMP:RegionInfo -XMP:Collections -XMP:PersonInImageWDetails <filepath>`
 - Always uses stay_open process with `-execute` delimiter and `{ready}` marker
 
+Minimal args file (`args.txt`) example used by stay_open:
+```
+-G1
+-n
+-json
+-struct
+-XMP:RegionInfo
+-XMP:Collections
+-XMP:PersonInImageWDetails
+<filepath>
+```
+
 **SQLite concurrency**: ALL `SaveChanges()` wrapped in retry loop (5 attempts, 1s sleep) catching `SqliteErrorCode == 5` (database locked).
+
+Pattern snippet:
+```csharp
+for (var attempt = 1; attempt <= 5; attempt++)
+{
+  try
+  {
+    await context.SaveChangesAsync();
+    break;
+  }
+  catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 5)
+  {
+    await Task.Delay(1000);
+    if (attempt == 5) throw;
+  }
+}
+```
 
 **Metadata JSON storage**: `Image.Metadata` contains full ExifTool JSON output after `JsonConverter.ConvertNumericAndBooleanValuesToString()` processing. Queryable via SQLite's `json_extract()`.
 
@@ -83,6 +130,18 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 2. Check if tag/person exists by name (unique constraint)
 3. Insert new tag/person if missing
 4. Insert `relation*` row linking ImageId to TagId/PeopleTagId
+
+Inline example (keywords):
+```csharp
+var existing = await descriptiveTagService.GetExistingTagNames(imageId);
+var incoming = new HashSet<string>(newTags, StringComparer.OrdinalIgnoreCase);
+if (!existing.SetEquals(incoming))
+{
+  await descriptiveTagService.DeleteAllRelations(imageId);
+  foreach (var tag in incoming)
+    await descriptiveTagService.AddTagRelation(imageId, tag);
+}
+```
 
 ## 5. Metadata Extraction Logic (MWG-compliant)
 
@@ -105,6 +164,14 @@ ImageDB.exe --mode reload                             # Re-extract derived field
     "ImageDBConnectionString": "Data Source=C:\\Database\\ImageDB.sqlite"
   },
   "IgnoreFolders": [ "\\.dtrash\\" ]
+}
+```
+
+Optional flags:
+```json
+{
+  "ImageThumbs": true,
+  "RegionThumbs": true
 }
 ```
 
@@ -133,6 +200,12 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 - Check `Log` table for errors: `SELECT * FROM Log ORDER BY LogEntryId DESC`
 - Use DeviceHelper test: uncomment `DeviceHelper.RunTest()` in Program.cs line 67
 
+Quick log query examples:
+```sql
+SELECT * FROM Log ORDER BY LogEntryId DESC LIMIT 50;
+SELECT * FROM Batch ORDER BY BatchID DESC LIMIT 10;
+```
+
 **Common views for analysis** (in `database/ImageDB.sqlite.sql`):
 - `vLegacyWindowsXP` — files with XPTitle/XPComment/XPKeywords tags
 - `vRegionMismatch` — MWG regions where AppliedToDimensions ≠ actual image dimensions
@@ -143,7 +216,7 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 **When adding DB fields**:
 1. Update `database/ImageDB.sqlite.sql` (DDL)
 2. Regenerate EF model or manually add property to `console/Models/Image.cs`
-3. Add extraction logic in `UpdateImageRecord()` using `GetExiftoolValue()` pattern
+3. Add extraction logic in `UpdateImageRecord()` using `GetFirstNonEmptyExifValue()` pattern
 4. Preserve SQLite retry loops in save operations
 
 **When modifying ExifTool extraction**:
@@ -151,6 +224,9 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 - Do NOT spawn per-file processes (destroys performance)
 - Maintain `-execute` protocol for stay_open mode
 - Keep `JsonConverter.ConvertNumericAndBooleanValuesToString()` call
+
+Preferred method for combined metadata:
+`ExifToolHelper.GetExiftoolMetadataBoth(filePath)`
 
 **When adding tag types**:
 - Follow `PeopleTagService.cs` pattern: unique name check → insert if missing → create relation
@@ -165,6 +241,12 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 **Target framework**: .NET 8.0  
 **DB engine**: SQLite 3 (via Microsoft.EntityFrameworkCore.Sqlite)  
 **Metadata source**: ExifTool (https://exiftool.org)
+
+Quick PowerShell run examples:
+```powershell
+./console/bin/Debug/net8.0/ImageDB.exe --mode quick
+./console/bin/Release/net8.0/ImageDB.exe --mode normal --folder "C:\Photos\2024"
+```
 
 **Useful queries**:
 ```sql
