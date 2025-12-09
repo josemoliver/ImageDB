@@ -20,6 +20,9 @@ This file provides project-specific patterns, workflows and architectural contex
 4. Store raw JSON in `Image.Metadata` field; store derived fields (Title, DateTimeTaken, Device, etc.) in dedicated columns
 5. **Smart caching**: Compare existing tags/regions/collections before delete+insert (70-90% faster for metadata-only updates)
 
+Quick inline example of the combined ExifTool call used internally:
+`-stay_open True -@ args.txt -execute -G1 -n -json -struct -XMP:RegionInfo -XMP:Collections -XMP:PersonInImageWDetails <filepath> {ready}`
+
 ## 2. Developer Workflows
 
 **Build & run**:
@@ -46,6 +49,11 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 
 **Critical dependency**: `exiftool.exe` must be in PATH. App validates with `ExifToolHelper.CheckExiftool()` on startup.
 
+To verify on Windows PowerShell:
+```powershell
+Get-Command exiftool | Select-Object Source
+```
+
 ## 3. Key Files & Responsibilities
 
 | File | Purpose |
@@ -61,6 +69,8 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 | `console/StructService.cs` | MWG structure services with smart region caching via `RegionCoordinatesMatch()` |
 | `console/Models/*.cs` | EF Core entities (14 models: Image, Batch, Tag, PeopleTag, Region, Collection, etc.) |
 | `console/appsettings.json` | Connection string, `IgnoreFolders` array, `ImageThumbs`, `RegionThumbs` boolean flags |
+| `database/ImageDB.sqlite.sql` | DDL for 12 tables + 40+ views + 9 performance indexes |
+| `database/migrations/*.sql` | Migration scripts for PixelHash column and Region indexes |
 
 
 ## 4. Project-Specific Conventions
@@ -68,6 +78,10 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 **Date formatting**: ALL timestamps use `yyyy-MM-dd HH:mm:ss` format. Methods like `ConvertDateToNewFormat()` enforce this. Do not change.
 
 **Path normalization**: Use `GetNormalizedFolderPath()` (removes quotes, trailing slashes) + `NormalizePathCase()` (matches filesystem casing). Required for `PhotoLibrary.Folder` matching.
+
+Inline example:
+`GetNormalizedFolderPath("\"C:\\Photos\\2023\\\"")` → `C:\Photos\2023`
+`NormalizePathCase("c:\\photos\\2023")` → matches actual filesystem casing
 
 **File change detection**:
 - `normal` mode: SHA1 hash via `getFileSHA1()` (buffered 8KB reads)
@@ -78,7 +92,36 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 - MWG structures: `-struct -XMP:RegionInfo -XMP:Collections -XMP:PersonInImageWDetails <filepath>`
 - Always uses stay_open process with `-execute` delimiter and `{ready}` marker
 
+Minimal args file (`args.txt`) example used by stay_open:
+```
+-G1
+-n
+-json
+-struct
+-XMP:RegionInfo
+-XMP:Collections
+-XMP:PersonInImageWDetails
+<filepath>
+```
+
 **SQLite concurrency**: ALL `SaveChanges()` wrapped in retry loop (5 attempts, 1s sleep) catching `SqliteErrorCode == 5` (database locked).
+
+Pattern snippet:
+```csharp
+for (var attempt = 1; attempt <= 5; attempt++)
+{
+  try
+  {
+    await context.SaveChangesAsync();
+    break;
+  }
+  catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 5)
+  {
+    await Task.Delay(1000);
+    if (attempt == 5) throw;
+  }
+}
+```
 
 **Metadata JSON storage**: `Image.Metadata` contains full ExifTool JSON output after `JsonConverter.ConvertNumericAndBooleanValuesToString()` processing. Queryable via SQLite's `json_extract()`.
 
@@ -87,6 +130,18 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 2. Check if tag/person exists by name (unique constraint)
 3. Insert new tag/person if missing
 4. Insert `relation*` row linking ImageId to TagId/PeopleTagId
+
+Inline example (keywords):
+```csharp
+var existing = await descriptiveTagService.GetExistingTagNames(imageId);
+var incoming = new HashSet<string>(newTags, StringComparer.OrdinalIgnoreCase);
+if (!existing.SetEquals(incoming))
+{
+  await descriptiveTagService.DeleteAllRelations(imageId);
+  foreach (var tag in incoming)
+    await descriptiveTagService.AddTagRelation(imageId, tag);
+}
+```
 
 ## 5. Metadata Extraction Logic (MWG-compliant)
 
@@ -109,6 +164,14 @@ ImageDB.exe --mode reload                             # Re-extract derived field
     "ImageDBConnectionString": "Data Source=C:\\Database\\ImageDB.sqlite"
   },
   "IgnoreFolders": [ "\\.dtrash\\" ]
+}
+```
+
+Optional flags:
+```json
+{
+  "ImageThumbs": true,
+  "RegionThumbs": true
 }
 ```
 
@@ -137,6 +200,12 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 - Check `Log` table for errors: `SELECT * FROM Log ORDER BY LogEntryId DESC`
 - Use DeviceHelper test: uncomment `DeviceHelper.RunTest()` in Program.cs line 67
 
+Quick log query examples:
+```sql
+SELECT * FROM Log ORDER BY LogEntryId DESC LIMIT 50;
+SELECT * FROM Batch ORDER BY BatchID DESC LIMIT 10;
+```
+
 **Common views for analysis** (in `database/ImageDB.sqlite.sql`):
 - `vLegacyWindowsXP` — files with XPTitle/XPComment/XPKeywords tags
 - `vRegionMismatch` — MWG regions where AppliedToDimensions ≠ actual image dimensions
@@ -156,6 +225,9 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 - Maintain `-execute` protocol for stay_open mode
 - Keep `JsonConverter.ConvertNumericAndBooleanValuesToString()` call
 
+Preferred method for combined metadata:
+`ExifToolHelper.GetExiftoolMetadataBoth(filePath)`
+
 **When adding tag types**:
 - Follow `PeopleTagService.cs` pattern: unique name check → insert if missing → create relation
 - Add corresponding `relation*` table if needed
@@ -169,6 +241,12 @@ INSERT INTO PhotoLibrary (Folder) VALUES ('C:\Photos\Year2023');
 **Target framework**: .NET 8.0  
 **DB engine**: SQLite 3 (via Microsoft.EntityFrameworkCore.Sqlite)  
 **Metadata source**: ExifTool (https://exiftool.org)
+
+Quick PowerShell run examples:
+```powershell
+./console/bin/Debug/net8.0/ImageDB.exe --mode quick
+./console/bin/Release/net8.0/ImageDB.exe --mode normal --folder "C:\Photos\2024"
+```
 
 **Useful queries**:
 ```sql

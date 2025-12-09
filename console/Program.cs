@@ -21,7 +21,7 @@ using System.Linq;
 
 // Constants for configuration values
 const int SqliteRetryCount = 5;
-const int SqliteRetryDelayMs = 1000;
+const int SqliteRetryDelayMs = 6000;
 const int GpsCoordinatePrecision = 6;
 const int FileReadBufferSize = 8192;
 
@@ -121,6 +121,8 @@ if (((operationMode == "normal") || (operationMode == "date") || (operationMode 
         // Check if Exiftool is properly installed, terminate app on error
         if (!ExifToolHelper.CheckExiftool())
         {
+            // Log ExifTool availability issue before exiting
+            LogEntry(0, string.Empty, "[EXIFTOOL] Not found in PATH. Aborting.");
             Environment.Exit(1);
         }
 
@@ -193,7 +195,12 @@ static async Task SaveChangesWithRetry(DbContext context)
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // database is locked
         {
-            if (retryCount == 0) throw;
+            if (retryCount == 0)
+            {
+                // Final failure after retries: log persistent lock issue
+                LogEntry(0, string.Empty, "[DB] SaveChanges failed after retries (locked): " + ex.Message);
+                throw;
+            }
             await Task.Delay(SqliteRetryDelayMs);
         }
     }
@@ -570,6 +577,13 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
     }
 }
 
+/// <summary>
+/// Updates an existing image record by re-reading ExifTool metadata, refreshing file properties,
+/// and preserving thumbnails unless regeneration is required.
+/// </summary>
+/// <param name="imageId">Database ImageId of the record to update.</param>
+/// <param name="updatedSHA1">New SHA1 (or null/empty if unchanged) used for integrity tracking.</param>
+/// <param name="batchID">Batch identifier for audit; pass null when not part of a batch.</param>
 async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
 {
     string specificFilePath     = string.Empty;
@@ -619,6 +633,7 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Warning: Failed to generate thumbnail for {specificFilePath}: {ex.Message}");
+                    LogEntry(batchID, specificFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
                     imageThumbnail = null;
                 }
             }
@@ -648,6 +663,18 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
     await UpdateImageRecord(imageId, updatedSHA1, batchID);
 }
 
+/// <summary>
+/// Adds a new image to the database: extracts combined metadata, normalizes format,
+/// generates thumbnail + pixel hash (optional), and persists core fields.
+/// </summary>
+/// <param name="photoLibraryID">Target photo library id.</param>
+/// <param name="photoFolder">Normalized folder path for album detection.</param>
+/// <param name="batchId">Batch id used for auditing.</param>
+/// <param name="specificFilePath">Full path to the image file.</param>
+/// <param name="fileName">Filename including extension.</param>
+/// <param name="fileExtension">Raw extension; will be normalized (e.g., jpg → jpeg).</param>
+/// <param name="fileSize">File size in bytes.</param>
+/// <param name="SHA1">SHA1 digest for integrity checks.</param>
 async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1)
 {
     int imageId                 = 0;
@@ -697,6 +724,7 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             catch (Exception ex)
             {
                 Console.WriteLine($"Warning: Failed to generate thumbnail for {specificFilePath}: {ex.Message}");
+                    LogEntry(batchId, specificFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
                 imageThumbnail = null;
             }
         }
@@ -981,6 +1009,9 @@ static (string location, string city, string stateProvince, string country, stri
 /// <summary>
 /// Processes people tags from metadata and updates database relationships.
 /// </summary>
+/// <param name="dbFiles">EF Core context.</param>
+/// <param name="imageID">Image id whose relations will be updated.</param>
+/// <param name="doc">Parsed JSON metadata document.</param>
 static async Task ProcessPeopleTags(CDatabaseImageDBsqliteContext dbFiles, int imageID, JsonDocument doc)
 {
     // MWG Region Names - Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 51
@@ -1010,6 +1041,9 @@ static async Task ProcessPeopleTags(CDatabaseImageDBsqliteContext dbFiles, int i
 /// <summary>
 /// Processes descriptive tags/keywords from metadata and updates database relationships.
 /// </summary>
+/// <param name="dbFiles">EF Core context.</param>
+/// <param name="imageID">Image id whose relations will be updated.</param>
+/// <param name="doc">Parsed JSON metadata document.</param>
 static async Task ProcessDescriptiveTags(CDatabaseImageDBsqliteContext dbFiles, int imageID, JsonDocument doc)
 {
     // Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 35
@@ -1037,6 +1071,11 @@ static async Task ProcessDescriptiveTags(CDatabaseImageDBsqliteContext dbFiles, 
 /// <summary>
 /// Processes MWG regions, collections, and persons from structured metadata.
 /// </summary>
+/// <param name="dbFiles">EF Core context.</param>
+/// <param name="imageID">Image id whose structured data will be reconciled.</param>
+/// <param name="structJsonMetadata">JSON string containing MWG-compliant structured metadata.</param>
+/// <param name="sourceFile">Original file path used for region thumbnail extraction.</param>
+/// <param name="generateRegionThumbnails">True to generate/refresh region thumbnails.</param>
 static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles, int imageID, string structJsonMetadata, string sourceFile, bool generateRegionThumbnails)
 {
     var mwgStruct = new StructService(dbFiles);
@@ -1275,9 +1314,11 @@ async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
 
     if (jsonMetadata != String.Empty)
     {
-        // Parse the JSON string dynamically into a JsonDocument
-        using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
+        // Parse the JSON string dynamically into a JsonDocument with error logging
+        try
         {
+            using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
+            {
             // Extract file properties
             var (fileCreatedDate, fileModifiedDate, filename, sourceFile) = ExtractFileProperties(doc);
 
@@ -1355,6 +1396,19 @@ async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
                     await SaveChangesWithRetry(dbFilesUpdate);
                 }
             }
+            }
+        }
+        catch (JsonException jex)
+        {
+            // JSON parse error: log and rethrow to be handled upstream
+            LogEntry(batchId ?? 0, string.Empty, "[JSON] Parse error in metadata: " + jex.Message);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Unexpected parse error: log and rethrow
+            LogEntry(batchId ?? 0, string.Empty, "[JSON] Unexpected error while parsing metadata: " + ex.Message);
+            throw;
         }
     }
 }
