@@ -132,11 +132,60 @@ The views are meant to assist in your metadata inspection and analysis. For exam
 
 
 ## Example usage:
-- Duplicate file detection, either by filename or hash value.
-- Identify files with missing metadata, such as dates, captions, geotags, etc.
-- WindowsXP Legacy Image Fields - Prior to better image photo metadata standards, Microsoft introduced as as part of the Windows XP operating system (released in 2001) to store descriptive metadata about images (and some other file types) in a way that supported Unicode text. The WindowsXP XPTitle, XPSubject, XPComment, XPAuthor and XPKeywords are stored in the EXIF tag space, but are not part of the official EXIF standard. They were intended to enable users to tag and search images using Windows Explorer, and are still supported by some applications. Use the `vLegacyWindowsXP` view to identify files containing data in these fields. This view is particulary useful if migrating your photo collection from apps such as Windows Photo Gallery - Refer to blog post: https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/
-- IPTC IIM – Developed in the 1990s, the IPTC IIM metadata standard was widely used in journalism and media. Although it has largely been replaced by newer formats like XMP, it remains supported by many tools for backward compatibility. To view IPTC IIM metadata in your images, use the `vLegacy_IPTC_IMM` view. 
-- MWG Region mistmatch - Cropping or resizing images can lead to inconsistencies in MWG Region metadata. Refer to page 51 of the MWG Guidance document for details. The `vRegionMismatch` view checks whether the AppliedToDimensions values in MWG Regions match the actual image dimensions and flags any discrepancies.
-- Reports for miscellaneous photo metadata such as Weather Tags (vWeatherTags) - https://jmoliver.wordpress.com/2018/07/07/capturing-the-moment-and-the-ambient-weather-information-in-photos/ 
 
-For additional usage scenarios read: [Using ImageDB to identify common photo metadata issues](https://github.com/josemoliver/ImageDB/wiki/Using-ImageDB-to-identify-common-photo-metadata-issues)
+### **Quality Control & Metadata Validation**
+- **Duplicate Detection** - Find duplicate files by SHA1 hash (`Image.SHA1`) or identify files with identical names in different locations using `vDuplicateFilenames` view.
+- **Missing Critical Metadata** - Use `vDescriptionsCount` and `vTitlesCount` to identify images lacking titles or descriptions. Query `vMissingGeotags` to find photos without location metadata.
+- **Date Verification** - Check `vDateTimeTakenSourceCount` to see how many images rely on fallback date sources (file system dates vs. EXIF dates). Use `vPhotoDates` to compare date fields across different metadata standards.
+- **Region Dimension Mismatch** - The `vRegionMismatch` view identifies images where MWG Region metadata doesn't match actual image dimensions—critical for images that have been cropped or resized.
+- **People Tag vs. Region Discrepancies** - Use `vPeopleTagRegionCountDiff` to find images where the count of people tags doesn't match the count of face regions, indicating potential metadata inconsistencies.
+
+### **Collection Analysis & Statistics**
+- **Camera Equipment Usage** - Query `vDevicesCount` to analyze which cameras captured the most photos, including date ranges and file sizes. Use `vLensInfo` for detailed lens usage statistics.
+- **Photography Timeline** - Use `vMonthlyPhotosTaken` to visualize photo production over time, identify gaps in your archive, or track shooting patterns.
+- **Library Overview** - The `vPhotoLibraries` view provides comprehensive statistics per photo library: image counts, unique devices, creators, albums, and tag usage.
+- **Album Analysis** - Use `vAlbums` to see date ranges, file counts, and storage size for each album/folder in your collection.
+- **Rating Distribution** - Query `vRatingCounts` to understand how you've rated your collection (useful for identifying your best work or unrated images).
+
+### **Geospatial & Location Analysis**
+- **Geographic Clustering** - The `vGeotags` and `vAlbumsGeotags` views calculate geographic centroids and clustering radius for locations, helping identify photo shooting locations and their geographic spread.
+- **Location Identifier Linking** - Use the `Location` table to leverage IPTC Location Identifiers that link photos to knowledge bases like Wikidata or GeoNames (see [blog post](https://jmoliver.wordpress.com/2016/03/18/using-iptc-location-identifiers-to-link-your-photos-to-knowledge-bases/)).
+- **Missing Location Metadata** - Use `vMissingGeotags` to find images with GPS coordinates but missing human-readable location names (City, State, Country).
+
+### **People & Face Recognition**
+- **Face Tagging Analysis** - Query `vPeopleTagCount` to see which people appear most frequently in your collection, including date ranges of appearances.
+- **Face Recognition Validation** - Compare people tags from different sources (Windows Live Photo Gallery, Adobe Lightroom, Apple Photos) using MWG Region data in the `Region` table.
+
+### **Copyright & Rights Management (Professional/Stock Photography)**
+- **Copyright Audit** - Use `vRights` to verify copyright metadata across different standards (EXIF, IPTC, XMP).
+- **Creator Contact Information** - The `vIPTCRightsContacts` view extracts comprehensive creator contact details (address, phone, email, website) essential for stock photography or professional archives.
+- **Rights Summary** - Query `vCreatorCount` to analyze image ownership distribution across your archive.
+
+### **Legacy Metadata Migration**
+- **Windows XP Photo Gallery Migration** - Prior to modern standards, Windows XP introduced proprietary metadata fields. Use `vLegacyWindowsXP` to identify and migrate data from XPTitle, XPSubject, XPComment, XPAuthor, and XPKeywords fields. Essential for migrating from Windows Photo Gallery ([blog post](https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/)).
+- **IPTC IIM Legacy Data** - The `vLegacy_IPTC_IMM` view helps identify 1990s-era IPTC IIM metadata that should be migrated to modern XMP standards for better compatibility.
+- **IPTC Digest Validation** - Use `vIPTCDigest` to detect when IPTC metadata has been modified without updating the digest hash (indicates potential metadata corruption or manual editing).
+
+### **Technical & Camera Settings Analysis**
+- **Camera Settings Review** - The `vImageCameraSettings` view provides aperture, shutter speed, ISO, focal length, and lens information—useful for analyzing shooting techniques or equipment performance.
+- **Exposure Program Analysis** - Identify which shooting modes (Manual, Aperture Priority, Shutter Priority) you use most frequently.
+- **Lens Usage Statistics** - Query `vLensInfo` to analyze which lenses are used most often and their performance characteristics.
+
+### **Metadata Standards Compliance**
+- **SaveMetadata.org Compliance** - Use `vSaveMetadataDotOrg` to verify adherence to SaveMetadata.org recommended metadata fields for long-term digital preservation.
+- **MWG Compliance Check** - Verify Metadata Working Group (MWG) compliance for fields like DateTimeTaken, Keywords, and Region data using dedicated views.
+- **Timezone Validation** - The `vExifTimeZone` view helps identify images missing proper timezone information in EXIF OffsetTimeOriginal field.
+
+### **Specialized Use Cases**
+- **Weather Metadata** - The `vWeatherTags` view extracts ambient temperature, humidity, and pressure data from EXIF fields (supported by some cameras and smartphones). Useful for environmental photography or scientific documentation ([blog post](https://jmoliver.wordpress.com/2018/07/07/capturing-the-moment-and-the-ambient-weather-information-in-photos/)).
+- **Image Uniqueness Tracking** - Use `vImageUniqueID` to track images by their EXIF ImageUniqueID for duplicate detection across different file formats or edited versions.
+- **Metadata Change Tracking** - The `vMetadataModificationComparison` view compares current metadata against historical versions in `MetadataHistory` table—critical for understanding how photo management software modifies metadata over time.
+- **Batch Processing Review** - Query the `Batch` table to analyze scanning performance, identify problematic batches, or review processing history.
+- **Label/Workflow Management** - Use `vLabels` to analyze XMP Labels and Urgency ratings for editorial workflow management.
+
+### **Advanced SQL Analysis**
+- **Custom Metadata Extraction** - Since all metadata is stored as JSON in `Image.Metadata`, use SQLite's `json_extract()` function to query any EXIF/IPTC/XMP field not exposed in standard columns.
+- **Metadata Field Discovery** - The `vMetadataKeys` view lists all metadata keys present in your collection with occurrence counts—useful for discovering non-standard or camera-specific metadata fields.
+- **Tag Cleanup** - Use `vTagsSansPeople` to identify descriptive tags that duplicate people names, helping maintain clean tag taxonomies.
+
+For additional usage scenarios and step-by-step examples, read: [Using ImageDB to identify common photo metadata issues](https://github.com/josemoliver/ImageDB/wiki/Using-ImageDB-to-identify-common-photo-metadata-issues)

@@ -584,8 +584,9 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
         if (image != null)
         {
             specificFilePath = image.Filepath;
-            //string jsonMetadata = GetExiftoolMetadata(specificFilePath);
-            jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath,"");
+            
+            // Optimized: Get both standard and struct metadata in one efficient call
+            (jsonMetadata, structJsonMetadata) = ExifToolHelper.GetExiftoolMetadataBoth(specificFilePath);
 
             if (jsonMetadata == string.Empty)
             {
@@ -593,14 +594,6 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
                 Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
                 LogEntry(-1, specificFilePath, "No metadata found for the file.");
                 throw new ArgumentException("No metadata found for the file.");
-            }
-
-            // Check if the file has regions
-            if ((jsonMetadata.Contains("XMP-mwg-rs:Region") ||
-                (jsonMetadata.Contains("XMP-mwg-coll:Collection") ||
-                (jsonMetadata.Contains("XMP-iptcExt:PersonInImage")))))
-            {
-                structJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "mwg");
             }
 
             // Get the file size and creation/modification dates
@@ -670,7 +663,8 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             { "heic", "heic" }
     };
 
-        jsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath,"");
+        // Optimized: Get both standard and struct metadata in one efficient call
+        (jsonMetadata, structJsonMetadata) = ExifToolHelper.GetExiftoolMetadataBoth(specificFilePath);
 
         if (jsonMetadata == string.Empty)
         {
@@ -678,14 +672,6 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             Console.WriteLine("[ERROR] No metadata found for the file: " + specificFilePath);
             LogEntry(-1, specificFilePath, "No metadata found for the file.");
             throw new ArgumentException("No metadata found for the file.");
-        }
-
-        // Check if the file has regions
-        if ((jsonMetadata.Contains("XMP-mwg-rs:Region") ||
-            (jsonMetadata.Contains("XMP-mwg-coll:Collection") ||
-            (jsonMetadata.Contains("XMP-iptcExt:PersonInImage")))))
-        {
-             structJsonMetadata = ExifToolHelper.GetExiftoolMetadata(specificFilePath, "mwg");
         }
 
         // Normalize the file extension

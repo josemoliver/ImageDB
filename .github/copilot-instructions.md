@@ -7,17 +7,18 @@ This file provides project-specific patterns, workflows and architectural contex
 **What it does**: CLI tool that scans photo library folders, extracts metadata via ExifTool, and updates a SQLite database for metadata analysis.
 
 **Core components**:
-- Entry point: `console/Program.cs` — main scanning loop, mode handling, batch tracking, and orchestration
-- Metadata extraction: `console/ExifToolHelper.cs` — manages long-running ExifTool process (`-stay_open True`)
+- Entry point: `console/Program.cs` — main scanning loop, mode handling, batch tracking, and orchestration (~1891 lines)
+- Metadata extraction: `console/ExifToolHelper.cs` — manages long-running ExifTool process (`-stay_open True`) with optimized reusable buffers
 - Data persistence: `console/Models/CDatabaseImageDBsqliteContext.cs` — EF Core 9.0 context with SQLite
-- Schema definition: `database/ImageDB.sqlite.sql` — canonical SQL for tables, views, and indexes
-- Tag services: `PeopleTagService`, `DescriptiveTagService`, `StructService` — CRUD for relationships (tags, people, regions, collections)
+- Schema definition: `database/ImageDB.sqlite.sql` — canonical SQL for 12 tables + 40+ views + 9 indexes
+- Tag services: `PeopleTagService`, `DescriptiveTagService`, `StructService` — CRUD for relationships with smart comparison logic
 
 **Data flow**:
 1. Scan photo folders → enumerate files → compare against DB (SHA1 or modified date)
 2. For new/changed files: invoke ExifTool → parse JSON → normalize values → update DB
-3. Extract structured data (MWG regions/collections) with separate ExifTool call using `-struct`
+3. **Optimized**: Single call to `GetExiftoolMetadataBoth()` retrieves both standard + struct metadata (40% faster for images with regions)
 4. Store raw JSON in `Image.Metadata` field; store derived fields (Title, DateTimeTaken, Device, etc.) in dedicated columns
+5. **Smart caching**: Compare existing tags/regions/collections before delete+insert (70-90% faster for metadata-only updates)
 
 ## 2. Developer Workflows
 
@@ -49,15 +50,18 @@ ImageDB.exe --mode reload                             # Re-extract derived field
 
 | File | Purpose |
 |------|---------|
-| `console/Program.cs` | Main logic: file scanning, batch tracking, SQLite retry loops, derived field extraction (1633 lines) |
-| `console/ExifToolHelper.cs` | ExifTool process management, stay_open protocol, command assembly (`-G1 -n -json` vs `-struct`) |
+| `console/Program.cs` | Main logic: file scanning, batch tracking, SQLite retry loops, derived field extraction, smart thumbnail/region caching (~1891 lines) |
+| `console/ExifToolHelper.cs` | ExifTool process management with optimized reusable StringBuilders, `GetExiftoolMetadataBoth()` for combined metadata retrieval |
 | `console/JsonConverter.cs` | Normalizes ExifTool output: converts all numbers/booleans → strings for consistency |
 | `console/DeviceHelper.cs` | Device name normalization (combines `IFD0:Make` + `IFD0:Model` → "Apple iPhone 11 Pro Max") |
 | `console/ImageFile.cs` | Lightweight DTO for file metadata (path, size, dates) |
 | `console/MetadataStuct.cs` | POCOs for MWG Region/Collection deserialization (nested structures) |
+| `console/PeopleTagService.cs` | People tag management with `GetExistingPeopleTagNames()` for smart comparison |
+| `console/DescriptiveTagService.cs` | Keyword tag management with `GetExistingTagNames()` for smart comparison |
+| `console/StructService.cs` | MWG structure services with smart region caching via `RegionCoordinatesMatch()` |
 | `console/Models/*.cs` | EF Core entities (14 models: Image, Batch, Tag, PeopleTag, Region, Collection, etc.) |
-| `console/appsettings.json` | Connection string (`ImageDBConnectionString`), `IgnoreFolders` array |
-| `database/ImageDB.sqlite.sql` | DDL for 12 tables + 30+ views (e.g., `vLegacyWindowsXP`, `vRegionMismatch`) |
+| `console/appsettings.json` | Connection string, `IgnoreFolders` array, `ImageThumbs`, `RegionThumbs` boolean flags |
+
 
 ## 4. Project-Specific Conventions
 
