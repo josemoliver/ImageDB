@@ -143,7 +143,7 @@ The views are meant to assist in your metadata inspection and analysis. For exam
 ### **Collection Analysis & Statistics**
 - **Camera Equipment Usage** - Query `vDevicesCount` to analyze which cameras captured the most photos, including date ranges and file sizes. Use `vLensInfo` for detailed lens usage statistics.
 - **Photography Timeline** - Use `vMonthlyPhotosTaken` to visualize photo production over time, identify gaps in your archive, or track shooting patterns.
-- **Library Overview** - The `vPhotoLibraryMetadataHealth` view returns per-library columns: `PhotoLibraryId`, `Folder`, `ImageCount`, `AlbumCount`, `TotalFilesize`, `UniqueDeviceCount`, `DistinctCreatorCount`, `PeopleTaggedImageCount`, `KeywordedImageCount`, `PercentWithTitle`, `PercentWithDescription`, `PercentWithLocation`, `PercentWithKeywords`, `PercentWithPeople`, `AvgMetadataScore_0to5`, `OldestPhoto`, `NewestPhoto`, `DuplicateFilenameGroups`.
+- **Library Overview** - The `vPhotoLibraryMetadataHealth` view provides comprehensive statistics per photo library: image counts, unique devices, creators, albums, and tag usage.
 - **Album Analysis** - Use `vAlbums` to see date ranges, file counts, and storage size for each album/folder in your collection.
 - **Rating Distribution** - Query `vRatingCounts` to understand how you've rated your collection (useful for identifying your best work or unrated images).
 
@@ -162,7 +162,7 @@ The views are meant to assist in your metadata inspection and analysis. For exam
 - **Rights Summary** - Query `vCreatorCount` to analyze image ownership distribution across your archive.
 
 ### **Legacy Metadata Migration**
-- **Windows XP Photo Gallery Migration** - Prior to modern standards, Windows XP introduced proprietary metadata fields. Use `vLegacyWindowsXP` to identify and migrate data from XPTitle, XPSubject, XPComment, XPAuthor, and XPKeywords fields. Essential for migrating from Windows Photo Gallery ([blog post](https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/)).
+- **Windows XP Photo Gallery Migration** - Prior to modern standards, Windows XP introduced proprietary metadata fields. Use `vLegacyWindowsXP` and or `vLegacyXPOnly` to identify and migrate data from XPTitle, XPSubject, XPComment, XPAuthor, and XPKeywords fields. Essential for migrating from Windows Photo Gallery ([blog post](https://jmoliver.wordpress.com/2017/02/12/accessing-windows-photo-gallery-metadata-using-exiftool/)).
 - **IPTC IIM Legacy Data** - The `vLegacy_IPTC_IMM` view helps identify 1990s-era IPTC IIM metadata that should be migrated to modern XMP standards for better compatibility.
 - **IPTC Digest Validation** - Use `vIPTCDigest` to detect when IPTC metadata has been modified without updating the digest hash (indicates potential metadata corruption or manual editing).
 

@@ -218,7 +218,7 @@ namespace ImageDB
         }
 
 
-        public async Task AddLocation(int imageId, string? locationName, string? locationURI, string locationType)
+        public async Task AddLocation(int imageId, string? locationName, string? locationURI, string? locationType)
         {
             locationName = locationName?.Trim();
             locationURI = locationURI?.Trim();
