@@ -16,9 +16,11 @@ namespace ImageDB
         private static readonly object exiftoolLock = new();
         private const string ReadyMarker = "{ready}";
         
-        // Reusable StringBuilder to avoid allocations (not thread-safe but protected by lock)
-        private static readonly StringBuilder commandBuilder = new StringBuilder(512);
-        private static readonly StringBuilder outputBuilder = new StringBuilder(8192);
+        // PERFORMANCE: Increased buffer sizes for large metadata payloads
+        // commandBuilder: 2KB for long file paths + command options
+        // outputBuilder: 128KB for images with extensive metadata (regions, keywords, etc.)
+        private static readonly StringBuilder commandBuilder = new StringBuilder(2048);
+        private static readonly StringBuilder outputBuilder = new StringBuilder(131072);
 
         static ExifToolHelper()
         {
@@ -87,8 +89,11 @@ namespace ImageDB
 
             exiftoolProcess.StartInfo.EnvironmentVariables["LANG"] = "en_US.UTF-8";
             exiftoolProcess.Start();
-            exiftoolInput = exiftoolProcess.StandardInput;
-            exiftoolOutput = exiftoolProcess.StandardOutput;
+            
+            // PERFORMANCE: Increased stream buffer sizes from default 4KB to 64KB
+            // Reduces system calls and improves throughput for large JSON responses
+            exiftoolInput = new StreamWriter(exiftoolProcess.StandardInput.BaseStream, Encoding.UTF8, bufferSize: 65536);
+            exiftoolOutput = new StreamReader(exiftoolProcess.StandardOutput.BaseStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 65536);
 
             Console.WriteLine("[EXIFTOOL] - Exiftool Process Started");
         }

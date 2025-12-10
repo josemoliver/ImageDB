@@ -7,8 +7,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System.CommandLine;
 using System.CommandLine.NamingConventionBinder;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Linq;
@@ -23,11 +25,11 @@ using System.Linq;
 const int SqliteRetryCount = 5;
 const int SqliteRetryDelayMs = 6000;
 const int GpsCoordinatePrecision = 6;
-const int FileReadBufferSize = 8192;
 
+// Define command-line options
 var rootCommand = new RootCommand
 {
-   new Option<string>(
+    new Option<string>(
         "--mode",
         description: "(Required) Operation modes [ normal | date | quick | reload ]"
     ),
@@ -40,26 +42,35 @@ var rootCommand = new RootCommand
 //DEBUG: Uncomment the following line to run the DeviceHelper Test
 //DeviceHelper.RunTest();return 0;
 
-
+// Initialize database context and load photo libraries
 using var db = new CDatabaseImageDBsqliteContext();
+var photoLibrary = db.PhotoLibraries.ToList();
 
-var photoLibrary                = db.PhotoLibraries.ToList();
-string photoFolderFilter        = string.Empty;
-string operationMode            = string.Empty;
-bool reloadMetadata             = false;
-bool quickScan                  = false;
-bool dateScan                   = false;
-bool generateThumbnails         = true;
-bool generateRegionThumbnails   = true;
+// Command-line arguments (populated by handler)
+string photoFolderFilter = string.Empty;
+string operationMode = string.Empty;
 
+// Operation mode flags
+bool reloadMetadata = false;
+bool quickScan = false;
+bool dateScan = false;
+
+// Thumbnail generation settings (loaded from appsettings.json)
+bool generateThumbnails = true;
+bool generateRegionThumbnails = true;
+
+// Display application banner
 Console.WriteLine("ImageDB - Scan and update your photo library.");
 Console.WriteLine("---------------------------------------------");
 Console.WriteLine("Code and Info: https://github.com/josemoliver/ImageDB");
 Console.WriteLine("Leveraging the Exiftool utility written by Phil Harvey - https://exiftool.org");
 Console.WriteLine("");
 
-// Get RegionThumbs and Thumbnail generation settings from appsettings.json
-var configuration = new ConfigurationManager().AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).Build();
+// Load configuration settings from appsettings.json
+var configuration = new ConfigurationManager()
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .Build();
+
 try
 {
     generateThumbnails = configuration.GetValue<bool>("ImageThumbs", true);
@@ -80,102 +91,102 @@ catch (Exception ex) when (ex is FormatException || ex is InvalidOperationExcept
     generateRegionThumbnails = true;
 }
 
-// Handler to process the command-line arguments
+// Set up command-line argument handler
 rootCommand.Handler = CommandHandler.Create((string folder, string mode) =>
 {
-    // Set the operation mode based on the input
     operationMode = mode?.ToLowerInvariant() ?? string.Empty;
-
-    // Get filter photo path, if any.
     photoFolderFilter = folder;
-
     return Task.CompletedTask;
 });
 
-// Parse and invoke the command
+// Parse command-line arguments
 await rootCommand.InvokeAsync(args);
 
-if (((operationMode == "normal") || (operationMode == "date") || (operationMode == "quick") || (operationMode == "reload")) == true)
-{
-    if (string.IsNullOrEmpty(photoFolderFilter))
-    {
-        photoFolderFilter = string.Empty;
-        Console.WriteLine("[INFO] - No filter applied.");
-    }
-    else
-    {
-        photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
-        Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
-    }
-
-
-    // Determine the mode and set appropriate flags
-    reloadMetadata = string.Equals(operationMode, "reload", StringComparison.OrdinalIgnoreCase);
-
-    if (reloadMetadata)
-    {
-        Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");
-    }
-    else
-    {
-        // Check if Exiftool is properly installed, terminate app on error
-        if (!ExifToolHelper.CheckExiftool())
-        {
-            // Log ExifTool availability issue before exiting
-            LogEntry(0, string.Empty, "[EXIFTOOL] Not found in PATH. Aborting.");
-            Environment.Exit(1);
-        }
-
-        // Set scan modes based on the provided mode
-        SetScanMode(operationMode);
-
-        Console.WriteLine("[START] - Scanning for new and updated files.");
-
-    }
-
-    foreach (var folder in photoLibrary)
-    {
-        //Normalize Folder Path
-        string photoFolder = folder.Folder.ToString() ?? "";
-        photoFolder = GetNormalizedFolderPath(photoFolder);
-
-        if ((photoFolderFilter == string.Empty) || (photoFolder == photoFolderFilter))
-        {
-
-            //Fetch photoLibraryId
-            int photoLibraryId = 0;
-            photoLibraryId = photoLibrary.FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))?.PhotoLibraryId ?? 0;
-
-            if (photoLibraryId != 0)
-            {
-                if (reloadMetadata == true)
-                {
-                    Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
-                    await ReloadMetadata(photoLibraryId);
-                }
-                else
-                {
-                    Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
-                    await ScanFiles(photoFolder, photoLibraryId);
-                }
-            }
-        }
-    }
-
-    if (reloadMetadata == false)
-    {
-        // Shutdown ExifTool process
-        ExifToolHelper.Shutdown();
-    }
-
-    // Exit the application
-    Environment.Exit(0);
-}
-else
+// Validate operation mode
+string[] validModes = { "normal", "date", "quick", "reload" };
+if (!validModes.Contains(operationMode))
 {
     Console.WriteLine("[ERROR] - Invalid mode. Use [ normal | date | quick | reload ]");
     Environment.Exit(1);
 }
+
+// Apply folder filter if specified
+if (string.IsNullOrEmpty(photoFolderFilter))
+{
+    Console.WriteLine("[INFO] - No filter applied.");
+}
+else
+{
+    photoFolderFilter = GetNormalizedFolderPath(photoFolderFilter);
+    Console.WriteLine("[INFO] - Filtered by folder: " + photoFolderFilter);
+}
+
+// Determine operation mode
+reloadMetadata = string.Equals(operationMode, "reload", StringComparison.OrdinalIgnoreCase);
+
+if (reloadMetadata)
+{
+    Console.WriteLine("[MODE] - Reprocessing existing metadata, no new and update from files.");
+}
+else
+{
+    // Verify ExifTool availability
+    if (!ExifToolHelper.CheckExiftool())
+    {
+        LogEntry(0, string.Empty, "[EXIFTOOL] Not found in PATH. Aborting.");
+        Environment.Exit(1);
+    }
+
+    // Configure scan mode based on operation
+    SetScanMode(operationMode);
+    Console.WriteLine("[START] - Scanning for new and updated files.");
+}
+
+// Process each photo library
+foreach (var folder in photoLibrary)
+{
+    // Normalize and validate folder path
+    string photoFolder = GetNormalizedFolderPath(folder.Folder?.ToString() ?? "");
+
+    // Apply folder filter if specified
+    bool shouldProcessFolder = string.IsNullOrEmpty(photoFolderFilter) || 
+                               photoFolder.Equals(photoFolderFilter, StringComparison.OrdinalIgnoreCase);
+
+    if (!shouldProcessFolder)
+        continue;
+
+    // Retrieve photo library ID
+    int photoLibraryId = photoLibrary
+        .FirstOrDefault(pl => pl.Folder.Equals(photoFolder, StringComparison.OrdinalIgnoreCase))
+        ?.PhotoLibraryId ?? 0;
+
+    if (photoLibraryId == 0)
+        continue;
+
+    // Execute appropriate operation
+    if (reloadMetadata)
+    {
+        Console.WriteLine("[UPDATE] - Reprocessing metadata folder: " + photoFolder);
+        await ReloadMetadata(photoLibraryId);
+    }
+    else
+    {
+        Console.WriteLine("[SCAN] - Scanning folder: " + photoFolder);
+        await ScanFiles(photoFolder, photoLibraryId);
+    }
+}
+
+// Clean up ExifTool process if it was used
+if (!reloadMetadata)
+{
+    ExifToolHelper.Shutdown();
+}
+
+// Exit successfully
+Environment.Exit(0);
+
+
+
 
 /// <summary>
 /// Saves changes to the database with SQLite lock retry logic.
@@ -206,27 +217,35 @@ static async Task SaveChangesWithRetry(DbContext context)
     }
 }
 
-// Method to set the scan mode based on the input
+/// <summary>
+/// Configures scan mode flags and displays the selected operation mode.
+/// </summary>
+/// <param name="mode">Scan mode: "normal", "date", or "quick"</param>
 void SetScanMode(string mode)
 {
-    // Default to normal mode
+    // Reset flags to default (normal mode)
     dateScan = false;
     quickScan = false;
     
-    if (string.Equals(mode, "normal", StringComparison.OrdinalIgnoreCase))
+    switch (mode.ToLowerInvariant())
     {
-        Console.WriteLine("[MODE] - Integrity scan for new and updated files.");
-    }
-    else if (string.Equals(mode, "date", StringComparison.OrdinalIgnoreCase))
-    {
-        dateScan = true;
-        Console.WriteLine("[MODE] - Scan for changes using file modified date.");
-    }
-    else if (string.Equals(mode, "quick", StringComparison.OrdinalIgnoreCase))
-    {
-        dateScan = true;
-        quickScan = true;
-        Console.WriteLine("[MODE] - Quick scan for changes using file modified date.");
+        case "normal":
+            // SHA1-based integrity scan (most thorough)
+            Console.WriteLine("[MODE] - Integrity scan for new and updated files.");
+            break;
+            
+        case "date":
+            // File modified date comparison (faster)
+            dateScan = true;
+            Console.WriteLine("[MODE] - Scan for changes using file modified date.");
+            break;
+            
+        case "quick":
+            // Stops at first unchanged file when sorted by date (fastest)
+            dateScan = true;
+            quickScan = true;
+            Console.WriteLine("[MODE] - Quick scan for changes using file modified date.");
+            break;
     }
 }
 
@@ -270,6 +289,7 @@ async Task ReloadMetadata(int photoLibraryId)
 
 async Task ScanFiles(string photoFolder, int photoLibraryId)
 {
+    var scanStartTime = System.Diagnostics.Stopwatch.StartNew();
     Console.WriteLine("[START] - Scanning folder for images: "+ photoFolder);
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -334,9 +354,256 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
         
         Console.WriteLine("[BATCH] - Started job # "+ batchID+" (" + imageFiles.Count + " files found.)");
 
+        // PERFORMANCE OPTIMIZATION: Pre-compute SHA1 hashes in parallel
+        var sha1Cache = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        
+        // OPTIMIZATION: Pre-compute thumbnails and pixel hashes in parallel for NEW files only
+        var thumbnailCache = new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        var pixelHashCache = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // COMBINED OPTIMIZATION: For new files with thumbnails enabled, do SHA1+thumbnail in SINGLE pass
+        // This eliminates duplicate file reads (was: SHA1 first, then thumbnail second = 2 reads)
+        if (dateScan == false)
+        {
+            // Normal mode: Split into new files (combined generation) vs existing files (SHA1-only)
+            var newFiles = imageFiles.Where(f => !existingImages.ContainsKey(f.FilePath)).ToList();
+            var existingFiles = imageFiles.Where(f => existingImages.ContainsKey(f.FilePath)).ToList();
+            
+            // PHASE 1: NEW FILES - Combined SHA1+Thumbnail generation (single read per file)
+            if (generateThumbnails && newFiles.Count > 0)
+            {
+                Console.WriteLine($"[OPTIMIZED] Pre-generating {newFiles.Count} new files (SHA1 + thumbnail + pixel hash)...");
+                
+                const int BATCH_SIZE = 50; // Process in blocks to manage memory
+                int totalFiles = newFiles.Count;
+                int processedFiles = 0;
+                
+                for (int batchStart = 0; batchStart < newFiles.Count; batchStart += BATCH_SIZE)
+                {
+                    var batch = newFiles.Skip(batchStart).Take(BATCH_SIZE).ToList();
+                    int batchProgress = 0;
+                    
+                    var partitioner = System.Collections.Concurrent.Partitioner.Create(batch, EnumerablePartitionerOptions.NoBuffering);
+                    
+                    System.Threading.Tasks.Parallel.ForEach(partitioner,
+                        new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                        imageFile =>
+                        {
+                            try
+                            {
+                                // OPTIMIZED: File-based SHA1 (for integrity) + single image load for thumbnail + pixel hash
+                                var (fileSHA1, thumb, pixelHash, loadedImage) = GenerateSHA1AndThumbnailCombined(imageFile.FilePath);
+                                
+                                sha1Cache[imageFile.FilePath] = fileSHA1;
+                                thumbnailCache[imageFile.FilePath] = thumb;
+                                pixelHashCache[imageFile.FilePath] = pixelHash;
+                                
+                                loadedImage?.Dispose();
+                            }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"\n[WARNING] Combined generation failed for {imageFile.FilePath}: {ex.Message}");
+                                    sha1Cache[imageFile.FilePath] = string.Empty;
+                                    thumbnailCache[imageFile.FilePath] = Array.Empty<byte>();
+                                    pixelHashCache[imageFile.FilePath] = string.Empty;
+                                }                            int currentProcessed = System.Threading.Interlocked.Increment(ref batchProgress);
+                            int totalProcessed = processedFiles + currentProcessed;
+                            if (currentProcessed % 10 == 0 || totalProcessed == totalFiles)
+                            {
+                                int percentage = (int)((double)totalProcessed / totalFiles * 100);
+                                Console.Write($"\r[OPTIMIZED] Progress: {totalProcessed}/{totalFiles} ({percentage}%)");
+                            }
+                        });
+                    
+                    processedFiles += batch.Count;
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                }
+                
+                Console.WriteLine($"\n[OPTIMIZED] Generated {newFiles.Count} (file SHA1 + thumbnail + pixel hash).");
+            }
+            else if (newFiles.Count > 0)
+            {
+                // Thumbnails disabled - SHA1-only for new files
+                Console.WriteLine($"[SHA1] Pre-computing hashes for {newFiles.Count} new files...");
+                
+                int totalNew = newFiles.Count;
+                int processedNew = 0;
+                
+                var partitioner = System.Collections.Concurrent.Partitioner.Create(newFiles, EnumerablePartitionerOptions.NoBuffering);
+                
+                System.Threading.Tasks.Parallel.ForEach(partitioner,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    imageFile =>
+                    {
+                        try
+                        {
+                            string hash = getFileSHA1(imageFile.FilePath);
+                            sha1Cache[imageFile.FilePath] = hash;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                            sha1Cache[imageFile.FilePath] = string.Empty;
+                        }
+                        
+                        int currentProcessed = System.Threading.Interlocked.Increment(ref processedNew);
+                        if (currentProcessed % 10 == 0 || currentProcessed == totalNew)
+                        {
+                            int percentage = (int)((double)currentProcessed / totalNew * 100);
+                            Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalNew} ({percentage}%)");
+                        }
+                    });
+                Console.WriteLine($"\n[SHA1] Computed {newFiles.Count} hashes for new files.");
+            }
+            
+            // PHASE 2: EXISTING FILES - SHA1-only (needed for comparison)
+            if (existingFiles.Count > 0)
+            {
+                Console.WriteLine($"[SHA1] Pre-computing hashes for {existingFiles.Count} existing files...");
+                
+                int totalExisting = existingFiles.Count;
+                int processedExisting = 0;
+                
+                var partitioner = System.Collections.Concurrent.Partitioner.Create(existingFiles, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+                
+                System.Threading.Tasks.Parallel.ForEach(partitioner,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    imageFile =>
+                    {
+                        try
+                        {
+                            string hash = getFileSHA1(imageFile.FilePath);
+                            sha1Cache[imageFile.FilePath] = hash;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                            sha1Cache[imageFile.FilePath] = string.Empty;
+                        }
+                        
+                        int currentProcessed = System.Threading.Interlocked.Increment(ref processedExisting);
+                        if (currentProcessed % 10 == 0 || currentProcessed == totalExisting)
+                        {
+                            int percentage = (int)((double)currentProcessed / totalExisting * 100);
+                            Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalExisting} ({percentage}%)");
+                        }
+                    });
+                Console.WriteLine($"\n[SHA1] Computed {existingFiles.Count} hashes for existing files.");
+            }
+        }
+        else
+        {
+            // Date/Quick mode: Only process new files (not in DB yet)
+            var newFiles = imageFiles.Where(f => !existingImages.ContainsKey(f.FilePath)).ToList();
+            
+            if (newFiles.Count > 0)
+            {
+                if (generateThumbnails)
+                {
+                    // COMBINED: SHA1+Thumbnail for new files
+                    Console.WriteLine($"[OPTIMIZED] Pre-generating {newFiles.Count} new files (SHA1 + thumbnail + pixel hash)...");
+                    
+                    const int BATCH_SIZE = 50;
+                    int totalFiles = newFiles.Count;
+                    int processedFiles = 0;
+                    
+                    for (int batchStart = 0; batchStart < newFiles.Count; batchStart += BATCH_SIZE)
+                    {
+                        var batch = newFiles.Skip(batchStart).Take(BATCH_SIZE).ToList();
+                        int batchProgress = 0;
+                        
+                        var partitioner = System.Collections.Concurrent.Partitioner.Create(batch, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+                        
+                        System.Threading.Tasks.Parallel.ForEach(partitioner,
+                            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                            imageFile =>
+                            {
+                                try
+                                {
+                                    var (fileSHA1, thumb, pixelHash, loadedImage) = GenerateSHA1AndThumbnailCombined(imageFile.FilePath);
+                                    
+                                    sha1Cache[imageFile.FilePath] = fileSHA1;
+                                    thumbnailCache[imageFile.FilePath] = thumb;
+                                    pixelHashCache[imageFile.FilePath] = pixelHash;
+                                    
+                                    loadedImage?.Dispose();
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"\n[WARNING] Combined generation failed for {imageFile.FilePath}: {ex.Message}");
+                                    sha1Cache[imageFile.FilePath] = string.Empty;
+                                    thumbnailCache[imageFile.FilePath] = Array.Empty<byte>();
+                                    pixelHashCache[imageFile.FilePath] = string.Empty;
+                                }
+                                
+                                int currentProcessed = System.Threading.Interlocked.Increment(ref batchProgress);
+                                int totalProcessed = processedFiles + currentProcessed;
+                                if (currentProcessed % 10 == 0 || totalProcessed == totalFiles)
+                                {
+                                    int percentage = (int)((double)totalProcessed / totalFiles * 100);
+                                    Console.Write($"\r[OPTIMIZED] Progress: {totalProcessed}/{totalFiles} ({percentage}%)");
+                                }
+                            });
+                        
+                        processedFiles += batch.Count;
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                    }
+                    
+                    Console.WriteLine($"\n[OPTIMIZED] Generated {newFiles.Count} (file SHA1 + thumbnail + pixel hash).");
+                }
+                else
+                {
+                    // SHA1-only for new files when thumbnails disabled
+                    Console.WriteLine($"[SHA1] Pre-computing hashes for {newFiles.Count} new files...");
+                    
+                    int totalNewFiles = newFiles.Count;
+                    int processedNewFiles = 0;
+                    
+                    var partitioner = System.Collections.Concurrent.Partitioner.Create(newFiles, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+                    
+                    System.Threading.Tasks.Parallel.ForEach(partitioner,
+                        new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                        imageFile =>
+                        {
+                            try
+                            {
+                                string hash = getFileSHA1(imageFile.FilePath);
+                                sha1Cache[imageFile.FilePath] = hash;
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"\n[WARNING] SHA1 computation failed for {imageFile.FilePath}: {ex.Message}");
+                                sha1Cache[imageFile.FilePath] = string.Empty;
+                            }
+                            
+                            int currentProcessed = System.Threading.Interlocked.Increment(ref processedNewFiles);
+                            if (currentProcessed % 10 == 0 || currentProcessed == totalNewFiles)
+                            {
+                                int percentage = (int)((double)currentProcessed / totalNewFiles * 100);
+                                Console.Write($"\r[SHA1] Progress: {currentProcessed}/{totalNewFiles} ({percentage}%)");
+                            }
+                        });
+                    Console.WriteLine($"\n[SHA1] Computed {newFiles.Count} hashes for new files.");
+                }
+            }
+        }
+
         // Iterate over each image file
+        Console.WriteLine($"[PROCESSING] Processing {imageFiles.Count} files...");
+        int lastProgressPercent = -1;
+        
         for (int i = 0; i < imageFiles.Count; i++)
         {
+            // Update progress bar (every 1% or at completion)
+            int currentPercent = (int)((double)(i + 1) / imageFiles.Count * 100);
+            if (currentPercent != lastProgressPercent || i == imageFiles.Count - 1)
+            {
+                lastProgressPercent = currentPercent;
+                Console.Write($"\r[PROCESSING] Progress: {i + 1}/{imageFiles.Count} ({currentPercent}%)");
+            }
+            
             if (suspendScan == true)
             {
                 break;
@@ -354,11 +621,11 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
             if (!fileExistsInDb)
             {
                 // File was not found in db, add it
-                SHA1 = getFileSHA1(imageFiles[i].FilePath);        
-                Console.WriteLine("[ADD] - " + imageFiles[i].FilePath);
+                // Use pre-computed SHA1 from cache (already computed in parallel)
+                SHA1 = sha1Cache.TryGetValue(imageFiles[i].FilePath, out var cachedHash) ? cachedHash : getFileSHA1(imageFiles[i].FilePath);
                 try
                 {
-                    await AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1);
+                    await AddImage(photoLibraryId, photoFolder, batchID, imageFiles[i].FilePath, imageFiles[i].FileName, imageFiles[i].FileExtension, imageFiles[i].FileSize, SHA1, thumbnailCache, pixelHashCache);
                     filesAdded++;                    
                 }
                 catch (Exception ex)
@@ -373,11 +640,12 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
             else
             {
                 //Check if file has been modified
-                imageId = existingImage.ImageId;
+                imageId = existingImage!.ImageId;
 
                 if (dateScan == false)
                 {
-                    SHA1 = getFileSHA1(imageFiles[i].FilePath);
+                    // Use pre-computed SHA1 from cache (already computed in parallel)
+                    SHA1 = sha1Cache.TryGetValue(imageFiles[i].FilePath, out var cachedHash) ? cachedHash : getFileSHA1(imageFiles[i].FilePath);
                     imageSHA1 = existingImage.Sha1 ?? string.Empty;
                 }
                 else
@@ -391,11 +659,10 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 if ((SHA1!=imageSHA1)&&(dateScan == false))
                 {
                     // File has been modified, update it
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
                         await CopyImageToMetadataHistory(imageId);
-                        await UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID, thumbnailCache, pixelHashCache);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -410,12 +677,11 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 {
                     // File has been modified, update it
                     SHA1 = getFileSHA1(imageFiles[i].FilePath);
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i].FilePath);
                     try
                     {
                         // Update file record
                         await CopyImageToMetadataHistory(imageId);
-                        await UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID, thumbnailCache, pixelHashCache);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -429,11 +695,10 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                 else if (reloadMetadata == true)
                 {
                     // File has been modified, update it
-                    Console.WriteLine("[UPDATE] - " + imageFiles[i]);
                     try
                     {
                         // Update file record
-                        await UpdateImage(imageId, SHA1, batchID);
+                        await UpdateImage(imageId, SHA1, batchID, thumbnailCache, pixelHashCache);
                         filesUpdated++;
                     }
                     catch (Exception ex)
@@ -457,13 +722,13 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
                     else
                     {
                         // File is unchanged, skip it
-                        Console.WriteLine("[SKIP] - " + imageFiles[i].FilePath);
                         filesSkipped++;
                     }
                 }
             }
 
         }
+        Console.WriteLine(); // Newline after progress bar
 
         // Check if files have been deleted
         // Use the pre-loaded dictionary for faster lookups
@@ -524,6 +789,22 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
             Console.WriteLine("[BATCH] - Completed job # " + batchID);
             Console.WriteLine("[RESULTS] - Files: "+imageFiles.Count+" found. " + filesAdded + " added. "+ filesUpdated+" updated. " + filesSkipped + " skipped. " + filesDeleted + " removed. " + filesError+" unable to read.");
 
+            // Display elapsed time from scan start
+            scanStartTime.Stop();
+            var scanElapsed = scanStartTime.Elapsed;
+            if (scanElapsed.TotalHours >= 1)
+            {
+                Console.WriteLine($"[TIME] Photo library processed in {(int)scanElapsed.TotalHours}h {scanElapsed.Minutes}m {scanElapsed.Seconds}s");
+            }
+            else if (scanElapsed.TotalMinutes >= 1)
+            {
+                Console.WriteLine($"[TIME] Photo library processed in {(int)scanElapsed.TotalMinutes}m {scanElapsed.Seconds}s");
+            }
+            else
+            {
+                Console.WriteLine($"[TIME] Photo library processed in {scanElapsed.TotalSeconds:F1}s");
+            }
+
             // Warn if not all files were processed
             if (imageFiles.Count != filesAdded + filesUpdated + filesSkipped + filesError)
             {
@@ -534,7 +815,7 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
             int elapsedTime = 0;
             string endDateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
-            try { elapsedTime = (int)(DateTime.Parse(endDateTime) - DateTime.Parse(jobbatch.StartDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
+            try { elapsedTime = (int)(DateTime.Parse(endDateTime) - DateTime.Parse(jobbatch?.StartDateTime ?? endDateTime)).TotalSeconds; } catch { elapsedTime = 0; }
 
             string elapsedTimeComment = string.Empty;
             if (elapsedTime >= 3600) // Greater than or equal to 1 hour
@@ -584,11 +865,14 @@ async Task ScanFiles(string photoFolder, int photoLibraryId)
 /// <param name="imageId">Database ImageId of the record to update.</param>
 /// <param name="updatedSHA1">New SHA1 (or null/empty if unchanged) used for integrity tracking.</param>
 /// <param name="batchID">Batch identifier for audit; pass null when not part of a batch.</param>
-async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
+async Task UpdateImage(int imageId, string updatedSHA1, int batchID,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? thumbnailCache = null,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string>? pixelHashCache = null)
 {
     string specificFilePath     = string.Empty;
     string jsonMetadata         = string.Empty;
     string structJsonMetadata   = string.Empty;
+    
     // Find the image by ImageId
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
@@ -616,35 +900,6 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
             string fileDateCreated  = fileInfo.CreationTime.ToString("yyyy-MM-dd HH:mm:ss");
             string fileDateModified = fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
 
-            // Smart thumbnail regeneration: only if missing or when we detect changes
-            byte[]? imageThumbnail = image.Thumbnail; // Preserve existing by default
-            string currentPixelHash = image.PixelHash ?? string.Empty;
-            
-            if (generateThumbnails && image.Thumbnail == null)
-            {
-                // Generate thumbnail for first time (also computes pixel hash)
-                try
-                {
-                    var (thumb, hash) = ImageToThumbnailBlobWithHash(specificFilePath);
-                    imageThumbnail = thumb;
-                    currentPixelHash = hash;
-                    Console.WriteLine($"[THUMBNAIL] Generated for first time: {specificFilePath}");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Warning: Failed to generate thumbnail for {specificFilePath}: {ex.Message}");
-                    LogEntry(batchID, specificFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
-                    imageThumbnail = null;
-                }
-            }
-            else if (image.Thumbnail != null && image.Thumbnail.Length > 0)
-            {
-                // Existing thumbnail preserved (PixelHash would match or thumbnail was manually generated)
-                Console.WriteLine($"[THUMBNAIL] Preserved existing thumbnail: {specificFilePath}");
-            }
-            // Note: For existing thumbnails, we preserve them on metadata-only updates
-            // User can force regeneration by deleting thumbnails (SET Thumbnail=NULL)
-
             // Update the fields with new values
             image.Filesize          = fileSize;
             image.FileCreatedDate   = fileDateCreated;
@@ -652,15 +907,14 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
             image.Metadata          = jsonMetadata;
             image.StuctMetadata     = structJsonMetadata;
             image.RecordModified    = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            image.Thumbnail         = imageThumbnail;
-            image.PixelHash         = currentPixelHash; // Store for future comparison 
 
             // Save changes to the database
             await SaveChangesWithRetry(dbFiles);
         }
     }
         
-    await UpdateImageRecord(imageId, updatedSHA1, batchID);
+    // Thumbnail generation now happens in UpdateImageRecord based on region changes
+    await UpdateImageRecord(imageId, updatedSHA1, batchID, thumbnailCache, pixelHashCache);
 }
 
 /// <summary>
@@ -675,7 +929,9 @@ async Task UpdateImage(int imageId, string updatedSHA1, int batchID)
 /// <param name="fileExtension">Raw extension; will be normalized (e.g., jpg → jpeg).</param>
 /// <param name="fileSize">File size in bytes.</param>
 /// <param name="SHA1">SHA1 digest for integrity checks.</param>
-async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1)
+async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string specificFilePath, string fileName, string fileExtension, long fileSize, string SHA1,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? thumbnailCache = null,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string>? pixelHashCache = null)
 {
     int imageId                 = 0;
     string jsonMetadata         = string.Empty;
@@ -703,30 +959,9 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
 
         // Normalize the file extension
         fileExtension = fileExtension.Replace(".", "").ToLowerInvariant();
-        if (extensionMap.TryGetValue(fileExtension, out string normalizedExtension))
+        if (extensionMap.TryGetValue(fileExtension, out string? normalizedExtension) && normalizedExtension != null)
         {
             fileExtension = normalizedExtension;
-        }
-
-        // Generate thumbnail
-        // Generate thumbnail for new images (also computes pixel hash efficiently)
-        byte[]? imageThumbnail = null;
-        string pixelHash = string.Empty;
-        
-        if (generateThumbnails)
-        {
-            try
-            {
-                var (thumb, hash) = ImageToThumbnailBlobWithHash(specificFilePath);
-                imageThumbnail = thumb;
-                pixelHash = hash;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Warning: Failed to generate thumbnail for {specificFilePath}: {ex.Message}");
-                    LogEntry(batchId, specificFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
-                imageThumbnail = null;
-            }
         }
 
     // Add the new image to the database
@@ -747,8 +982,8 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
                 StuctMetadata = structJsonMetadata,
                 RecordAdded = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 
-                Thumbnail = imageThumbnail,
-                PixelHash = pixelHash
+                Thumbnail = null, // Will be generated in UpdateImageRecord()
+                PixelHash = string.Empty
             };
 
             dbFiles.Add(newImage);
@@ -758,7 +993,7 @@ async Task AddImage(int photoLibraryID, string photoFolder, int batchId, string 
             imageId = newImage.ImageId;
         }
 
-        await UpdateImageRecord(imageId, SHA1, null);
+        await UpdateImageRecord(imageId, SHA1, null, thumbnailCache, pixelHashCache);
 }
 
 /// <summary>
@@ -833,7 +1068,7 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
     //XMP-photoshop:DateCreated (1st option - Preferred)
     if (doc.RootElement.TryGetProperty("XMP-photoshop:DateCreated", out var propertyPhotoshopDate) && !string.IsNullOrWhiteSpace(propertyPhotoshopDate.GetString()))
     {
-        dateTimeTaken = ConvertDateToNewFormat(propertyPhotoshopDate.GetString().Trim()) ?? "";
+        dateTimeTaken = ConvertDateToNewFormat(propertyPhotoshopDate.GetString()?.Trim() ?? "") ?? "";
         dateTimeTakenSource = "XMP-photoshop:DateCreated";
         tzDateTime = propertyPhotoshopDate.GetString() ?? "";
     }
@@ -842,7 +1077,7 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
     if (dateTimeTaken == string.Empty)
     {
         if (doc.RootElement.TryGetProperty("ExifIFD:DateTimeOriginal", out var propertyDateTimeOriginal) && !string.IsNullOrWhiteSpace(propertyDateTimeOriginal.GetString()))
-        { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:DateTimeOriginal"; } //Exif DateTime does not contain time-zone information which is stored separately per Exif 2.32 spec. 
+        { dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeOriginal.GetString()?.Trim() ?? "") ?? ""; dateTimeTakenSource = "ExifIFD:DateTimeOriginal"; } //Exif DateTime does not contain time-zone information which is stored separately per Exif 2.32 spec. 
     }
 
     //ExifIFD:CreateDate (3rd option)
@@ -850,7 +1085,7 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
     {
         //ExifIFD:CreateDate
         if (doc.RootElement.TryGetProperty("ExifIFD:CreateDate", out var propertyCreateDate) && !string.IsNullOrWhiteSpace(propertyCreateDate.GetString()))
-        { dateTimeTaken = ConvertDateToNewFormat(propertyCreateDate.GetString().Trim()) ?? ""; dateTimeTakenSource = "ExifIFD:CreateDate"; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
+        { dateTimeTaken = ConvertDateToNewFormat(propertyCreateDate.GetString()?.Trim() ?? "") ?? ""; dateTimeTakenSource = "ExifIFD:CreateDate"; } //Exif DateTime does not contain time-zone information which is stored seperately per Exif 2.32 spec. 
     }
 
     // XMP-exif:DateTimeOriginal (4th option)
@@ -859,7 +1094,9 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
         // XMP-exif:DateTimeOriginal - Not part of the MWG spec - Use the XMP-exif:DateTimeOriginal as some applications use this.
         if (doc.RootElement.TryGetProperty("XMP-exif:DateTimeOriginal", out var propertyDateTimeCreated) && !string.IsNullOrWhiteSpace(propertyDateTimeCreated.GetString()))
         {
-            dateTimeTaken = ConvertDateToNewFormat(propertyDateTimeCreated.GetString().Trim()) ?? ""; dateTimeTakenSource = "XMP-exif:DateTimeOriginal";
+            string? convertedDate = ConvertDateToNewFormat(propertyDateTimeCreated.GetString()!.Trim());
+            dateTimeTaken = convertedDate ?? string.Empty;
+            dateTimeTakenSource = "XMP-exif:DateTimeOriginal";
             if (tzDateTime == string.Empty) { tzDateTime = propertyDateTimeCreated.GetString() ?? ""; }
         }
     }
@@ -903,12 +1140,12 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
 
         if (DateTime.Parse(fileCreatedDate) > DateTime.Parse(fileModifiedDate))
         {
-            dateTimeTaken = fileModifiedDate;
+            dateTimeTaken       = fileModifiedDate;
             dateTimeTakenSource = "File Modified Date";
         }
         else
         {
-            dateTimeTaken = fileCreatedDate;
+            dateTimeTaken       = fileCreatedDate;
             dateTimeTakenSource = "File Created Date";
         }
     }
@@ -947,9 +1184,9 @@ static (string dateTime, string source, string timezone) ExtractDateTimeTaken(Js
 /// </summary>
 static (decimal? latitude, decimal? longitude, decimal? altitude) ExtractGeoCoordinates(JsonDocument doc)
 {
-    string stringLatitude = GetFirstNonEmptyExifValue(doc, "Composite:GPSLatitude");
-    string stringLongitude = GetFirstNonEmptyExifValue(doc, "Composite:GPSLongitude");
-    string stringAltitude = GetFirstNonEmptyExifValue(doc, "Composite:GPSAltitude");
+    string stringLatitude   = GetFirstNonEmptyExifValue(doc, "Composite:GPSLatitude");
+    string stringLongitude  = GetFirstNonEmptyExifValue(doc, "Composite:GPSLongitude");
+    string stringAltitude   = GetFirstNonEmptyExifValue(doc, "Composite:GPSAltitude");
 
     decimal? latitude;
     decimal? longitude;
@@ -958,17 +1195,17 @@ static (decimal? latitude, decimal? longitude, decimal? altitude) ExtractGeoCoor
     try
     {
         // Round values to GpsCoordinatePrecision decimal places
-        stringLatitude = RoundCoordinate(stringLatitude, GpsCoordinatePrecision);
+        stringLatitude  = RoundCoordinate(stringLatitude, GpsCoordinatePrecision);
         stringLongitude = RoundCoordinate(stringLongitude, GpsCoordinatePrecision);
 
-        latitude = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
-        longitude = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
+        latitude    = string.IsNullOrWhiteSpace(stringLatitude) ? null : decimal.Parse(stringLatitude, CultureInfo.InvariantCulture);
+        longitude   = string.IsNullOrWhiteSpace(stringLongitude) ? null : decimal.Parse(stringLongitude, CultureInfo.InvariantCulture);
     }
     catch (FormatException)
     {
         // Invalid GPS coordinate format - set to null
-        latitude = null;
-        longitude = null;
+        latitude    = null;
+        longitude   = null;
     }
 
     try
@@ -991,17 +1228,17 @@ static (string location, string city, string stateProvince, string country, stri
 {
     // MWG 2010 Standard Ref: https://web.archive.org/web/20180919181934/http://www.metadataworkinggroup.org/pdf/mwg_guidance.pdf page 45
     // Ref: https://www.iptc.org/std/photometadata/specification/IPTC-PhotoMetadata
-    string[] exiftoolLocationTags = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
-    string[] exiftoolCityTags = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
-    string[] exiftoolStateProvinceTags = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
-    string[] exiftoolCountryTags = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
-    string[] exiftoolCountryCodeTags = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
+    string[] exiftoolLocationTags       = { "XMP-iptcExt:LocationCreatedSublocation", "XMP-iptcCore:Location", "IPTC:Sub-location" };
+    string[] exiftoolCityTags           = { "XMP-iptcExt:LocationCreatedCity", "XMP-photoshop:City", "IPTC:City" };
+    string[] exiftoolStateProvinceTags  = { "XMP-iptcExt:LocationCreatedProvinceState", "XMP-photoshop:State", "IPTC:Province-State" };
+    string[] exiftoolCountryTags        = { "XMP-iptcExt:LocationCreatedCountryName", "XMP-photoshop:Country", "IPTC:Country-PrimaryLocationName" };
+    string[] exiftoolCountryCodeTags    = { "XMP-iptcExt:LocationCreatedCountryCode", "XMP-iptcCore:CountryCode", "IPTC:Country-PrimaryLocationCode" };
 
-    string location = GetFirstNonEmptyExifValue(doc, exiftoolLocationTags);
-    string city = GetFirstNonEmptyExifValue(doc, exiftoolCityTags);
-    string stateProvince = GetFirstNonEmptyExifValue(doc, exiftoolStateProvinceTags);
-    string country = GetFirstNonEmptyExifValue(doc, exiftoolCountryTags);
-    string countryCode = GetFirstNonEmptyExifValue(doc, exiftoolCountryCodeTags);
+    string location         = GetFirstNonEmptyExifValue(doc, exiftoolLocationTags);
+    string city             = GetFirstNonEmptyExifValue(doc, exiftoolCityTags);
+    string stateProvince    = GetFirstNonEmptyExifValue(doc, exiftoolStateProvinceTags);
+    string country          = GetFirstNonEmptyExifValue(doc, exiftoolCountryTags);
+    string countryCode      = GetFirstNonEmptyExifValue(doc, exiftoolCountryCodeTags);
 
     return (location, city, stateProvince, country, countryCode);
 }
@@ -1076,7 +1313,9 @@ static async Task ProcessDescriptiveTags(CDatabaseImageDBsqliteContext dbFiles, 
 /// <param name="structJsonMetadata">JSON string containing MWG-compliant structured metadata.</param>
 /// <param name="sourceFile">Original file path used for region thumbnail extraction.</param>
 /// <param name="generateRegionThumbnails">True to generate/refresh region thumbnails.</param>
-static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles, int imageID, string structJsonMetadata, string sourceFile, bool generateRegionThumbnails)
+/// <param name="preGeneratedRegionThumbnails">Optional pre-generated region thumbnails from combined generation.</param>
+/// <param name="cachedImage">Optional pre-loaded MagickImage to reuse for region extraction (ownership transferred).</param>
+static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles, int imageID, string structJsonMetadata, string sourceFile, bool generateRegionThumbnails, byte[]?[]? preGeneratedRegionThumbnails = null, MagickImage? cachedImage = null)
 {
     var mwgStruct = new StructService(dbFiles);
     
@@ -1091,17 +1330,22 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
         // Deserialize the JSON string into a MetadataStuct.Struct object
         try
         {
-            MetadataStuct.Struct structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            MetadataStuct.Struct? structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             if (structMeta != null)
             {
-                // Add Regions with smart thumbnail reuse
+                // Add Regions with smart thumbnail reuse and batch generation
                 try
                 {
                     if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
                     {
-                        foreach (var reg in structMeta.RegionInfo.RegionList)
+                        // First pass: identify which regions need new thumbnails
+                        var regionsNeedingThumbs = new List<(int index, MetadataStuct.RegionList region)>();
+                        
+                        for (int idx = 0; idx < structMeta.RegionInfo.RegionList.Count; idx++)
                         {
+                            var reg = structMeta.RegionInfo.RegionList[idx];
+                            
                             // Parse region coordinates for comparison
                             decimal? h = decimal.TryParse(reg.Area.H, out var hVal) ? hVal : null;
                             decimal? w = decimal.TryParse(reg.Area.W, out var wVal) ? wVal : null;
@@ -1124,18 +1368,53 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
                             }
                             else
                             {
-                                // New region or coordinates changed - generate thumbnail
-                                byte[]? webpRegionBlob = null;
-
-                                if (generateRegionThumbnails == true)
-                                {
-                                    webpRegionBlob = ExtractRegionToBlob(sourceFile, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y);
-                                    Console.WriteLine($"[REGION] Generated new thumbnail for region: {reg.Name}");
-                                }
-
-                                int newRegionId = await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob);
-                                regionIdsToKeep.Add(newRegionId);
+                                // Mark for batch thumbnail generation
+                                regionsNeedingThumbs.Add((idx, reg));
                             }
+                        }
+                        // Second pass: use pre-generated thumbnails or batch generate if needed
+                        byte[]?[]? batchThumbnails = preGeneratedRegionThumbnails;
+                        
+                        if (batchThumbnails == null && generateRegionThumbnails && regionsNeedingThumbs.Count > 0)
+                        {
+                            var regionCoords = regionsNeedingThumbs
+                                .Select(r => (r.region.Area.H ?? "0", r.region.Area.W ?? "0", r.region.Area.X ?? "0", r.region.Area.Y ?? "0"))
+                                .ToList();
+                            
+                            // OPTIMIZATION: Reuse cached image if available (from first-time generation)
+                            if (cachedImage != null)
+                            {
+                                batchThumbnails = ExtractRegionsToBlobBatchFromImage(cachedImage, regionCoords);
+                                Console.WriteLine($"[REGION] Batch generated {regionsNeedingThumbs.Count} thumbnails using cached image.");
+                                cachedImage.Dispose();
+                                cachedImage = null;
+                            }
+                            else
+                            {
+                                // COMMON CASE: Metadata-only update (regions changed, pixels didn't)
+                                // Load image on-demand only when regions actually need extraction
+                                batchThumbnails = ExtractRegionsToBlobBatch(sourceFile, regionCoords);
+                                Console.WriteLine($"[REGION] Batch generated {regionsNeedingThumbs.Count} thumbnails (metadata update)");
+                            }
+                        }
+                        else if (preGeneratedRegionThumbnails != null)
+                        {
+                            Console.WriteLine($"[REGION] Using pre-generated thumbnails from combined generation");
+                        }
+                        else if (regionsNeedingThumbs.Count == 0 && structMeta.RegionInfo.RegionList.Count > 0)
+                        {
+                            Console.WriteLine($"[REGION] All {structMeta.RegionInfo.RegionList.Count} region thumbnails preserved (no changes)");
+                        }
+                        
+                        // Third pass: add new regions to database with their thumbnails
+                        for (int i = 0; i < regionsNeedingThumbs.Count; i++)
+                        {
+                            var (idx, reg) = regionsNeedingThumbs[i];
+                            byte[]? webpRegionBlob = (batchThumbnails != null && i < batchThumbnails.Length) ? batchThumbnails[i] : null;
+                            
+                            int newRegionId = await mwgStruct.AddRegion(imageID, reg.Name, reg.Type, reg.Area.Unit, 
+                                reg.Area.H, reg.Area.W, reg.Area.X, reg.Area.Y, reg.Area.D, webpRegionBlob ?? Array.Empty<byte>());
+                            regionIdsToKeep.Add(newRegionId);
                         }
                     }
                 }
@@ -1149,6 +1428,8 @@ static async Task ProcessMWGStructuredData(CDatabaseImageDBsqliteContext dbFiles
                 {
                     // Delete regions that weren't matched or added
                     await mwgStruct.DeleteRegionsExcept(imageID, regionIdsToKeep);
+                    // Ensure cached image is disposed even if exception occurs
+                    cachedImage?.Dispose();
                 }
 
                 // Add Collections (with smart comparison)
@@ -1268,48 +1549,33 @@ static async Task ProcessLocationIdentifiers(CDatabaseImageDBsqliteContext dbFil
     }
 }
 
-async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
+async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId, 
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? thumbnailCache = null,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string>? pixelHashCache = null)
 {
     // Initialize variables for metadata extraction
     string jsonMetadata = string.Empty;
     string structJsonMetadata = string.Empty;
+    string sourceFilePath = string.Empty;
+    byte[]? existingThumbnail = null;
+    string existingPixelHash = string.Empty;
 
     //Get metadata from db
     using var dbFiles = new CDatabaseImageDBsqliteContext();
     {
-        jsonMetadata = await dbFiles.Images
+        var imageData = await dbFiles.Images
             .AsNoTracking()
             .Where(image => image.ImageId == imageID)
-            .Select(image => image.Metadata)
-            .FirstOrDefaultAsync() ?? "";
-        structJsonMetadata = await dbFiles.Images
-            .AsNoTracking()
-            .Where(image => image.ImageId == imageID)
-            .Select(image => image.StuctMetadata)
-            .FirstOrDefaultAsync() ?? "";
-
-        //Delete record PeopleTags from db
-        bool tagsFound = false;
-
-        var relationPeopleTag = await dbFiles.RelationPeopleTags.FirstOrDefaultAsync(i => i.ImageId == imageID);
-        if (relationPeopleTag != null)
-        {
-            tagsFound = true;
-            dbFiles.RelationPeopleTags.Remove(relationPeopleTag);
-        }
-
-        var relationTag = await dbFiles.RelationTags.FirstOrDefaultAsync(i => i.ImageId == imageID);
-
-        if (relationTag != null)
-        {
-            tagsFound = true;
-            dbFiles.RelationTags.Remove(entity: relationTag);
-        }
-
-        if (tagsFound == true)
-        {
-            await SaveChangesWithRetry(dbFiles);
-        }
+            .Select(image => new { image.Metadata, image.StuctMetadata, image.Filepath, image.Thumbnail, image.PixelHash })
+            .FirstOrDefaultAsync();
+        
+        if (imageData == null) return;
+        
+        jsonMetadata = imageData.Metadata ?? "";
+        structJsonMetadata = imageData.StuctMetadata ?? "";
+        sourceFilePath = imageData.Filepath ?? "";
+        existingThumbnail = imageData.Thumbnail;
+        existingPixelHash = imageData.PixelHash ?? string.Empty;
     }
 
     if (jsonMetadata != String.Empty)
@@ -1319,83 +1585,259 @@ async Task UpdateImageRecord(int imageID, string updatedSHA1, int? batchId)
         {
             using (JsonDocument doc = JsonDocument.Parse(jsonMetadata))
             {
-            // Extract file properties
-            var (fileCreatedDate, fileModifiedDate, filename, sourceFile) = ExtractFileProperties(doc);
+                // Extract file properties
+                var (fileCreatedDate, fileModifiedDate, filename, sourceFile) = ExtractFileProperties(doc);
 
-            // Extract basic metadata fields
-            string title = ExtractTitle(doc);
-            string description = ExtractDescription(doc);
-            string rating = ExtractRating(doc);
+                // Extract basic metadata fields
+                string title = ExtractTitle(doc);
+                string description = ExtractDescription(doc);
+                string rating = ExtractRating(doc);
 
-            // Extract date/time with timezone
-            var (dateTimeTaken, dateTimeTakenSource, dateTimeTakenTimeZone) = ExtractDateTimeTaken(doc, fileCreatedDate, fileModifiedDate);
+                // Extract date/time with timezone
+                var (dateTimeTaken, dateTimeTakenSource, dateTimeTakenTimeZone) = ExtractDateTimeTaken(doc, fileCreatedDate, fileModifiedDate);
 
-            // Extract device information
-            string deviceMake = GetFirstNonEmptyExifValue(doc, "IFD0:Make");
-            string deviceModel = GetFirstNonEmptyExifValue(doc, "IFD0:Model");
-            string device = ImageDB.DeviceHelper.GetDevice(deviceMake, deviceModel);
+                // Extract device information
+                string deviceMake = GetFirstNonEmptyExifValue(doc, "IFD0:Make");
+                string deviceModel = GetFirstNonEmptyExifValue(doc, "IFD0:Model");
+                string device = ImageDB.DeviceHelper.GetDevice(deviceMake, deviceModel);
 
-            // Extract geocoordinates
-            var (latitude, longitude, altitude) = ExtractGeoCoordinates(doc);
+                // Extract geocoordinates
+                var (latitude, longitude, altitude) = ExtractGeoCoordinates(doc);
 
-            // Extract location metadata
-            var (location, city, stateProvince, country, countryCode) = ExtractLocationMetadata(doc);
+                // Extract location metadata
+                var (location, city, stateProvince, country, countryCode) = ExtractLocationMetadata(doc);
 
-            // Extract creator and copyright
-            string creator = GetFirstNonEmptyExifValue(doc, new string[] { "XMP-dc:Creator", "IPTC:By-line", "IFD0:Artist", "XMP-tiff:Artist", "IFD0:XPAuthor" });
-            string copyright = GetFirstNonEmptyExifValue(doc, new string[] { "XMP-dc:Rights", "IPTC:CopyrightNotice", "IFD0:Copyright" });
+                // Extract creator and copyright
+                string creator = GetFirstNonEmptyExifValue(doc, new string[] { "XMP-dc:Creator", "IPTC:By-line", "IFD0:Artist", "XMP-tiff:Artist", "IFD0:XPAuthor" });
+                string copyright = GetFirstNonEmptyExifValue(doc, new string[] { "XMP-dc:Rights", "IPTC:CopyrightNotice", "IFD0:Copyright" });
 
-            // Process people tags
-            await ProcessPeopleTags(dbFiles, imageID, doc);
-
-            // Process MWG Regions, Collections, and Persons
-            await ProcessMWGStructuredData(dbFiles, imageID, structJsonMetadata, sourceFile, generateRegionThumbnails);
-
-            // Process descriptive tags/keywords
-            await ProcessDescriptiveTags(dbFiles, imageID, doc);
-
-            // Process IPTC location identifiers
-            await ProcessLocationIdentifiers(dbFiles, imageID, doc, location);
-
-            // Update the image record with extracted metadata
-            using var dbFilesUpdate = new CDatabaseImageDBsqliteContext();
-            {
-                var image = dbFilesUpdate.Images.FirstOrDefault(img => img.ImageId == imageID);
-
-                if (image != null)
+                // SMART THUMBNAIL STRATEGY: Detect region changes early to choose optimal generation path
+                byte[]? mainThumbnail = existingThumbnail;
+                string computedPixelHash = existingPixelHash;
+                MagickImage? cachedImageForRegions = null;
+                bool regionsWillChange = false;
+                
+                // Early detection: Check if regions will change (before expensive image load)
+                if (generateThumbnails && generateRegionThumbnails && structJsonMetadata != string.Empty)
                 {
-                    // Update the Date field (assuming Date is a DateTime property)
-                    image.Title = title;
-                    image.Description = description;
-                    image.Rating = rating;
-                    image.DateTimeTaken = dateTimeTaken;
-                    image.DateTimeTakenTimeZone = dateTimeTakenTimeZone;
-                    image.Device = device;
-                    image.Latitude = latitude;
-                    image.Longitude = longitude;
-                    image.Altitude = altitude;
-                    image.Location = location;
-                    image.City = city;
-                    image.StateProvince = stateProvince;
-                    image.Country = country;
-                    image.CountryCode = countryCode;
-                    image.Creator = creator;
-                    image.Copyright = copyright;
-                    image.FileCreatedDate = fileCreatedDate;
-                    image.FileModifiedDate = fileModifiedDate;
-                    image.DateTimeTakenSource = dateTimeTakenSource;
-
-                    // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
-                    if (updatedSHA1 != String.Empty)
+                    try
                     {
-                        image.Sha1 = updatedSHA1;
-                        image.ModifiedBatchId = batchId;
+                        var structMeta = JsonSerializer.Deserialize<MetadataStuct.Struct>(structJsonMetadata, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (structMeta?.RegionInfo?.RegionList != null && structMeta.RegionInfo.RegionList.Any())
+                        {
+                            // Quick check: compare region count as first indicator
+                            var mwgStruct = new StructService(dbFiles);
+                            var existingRegions = await mwgStruct.GetExistingRegions(imageID);
+                            
+                            // Detailed check: see if any region coordinates/names differ
+                            if (existingRegions.Count != structMeta.RegionInfo.RegionList.Count)
+                            {
+                                regionsWillChange = true;
+                            }
+                            else
+                            {
+                                // Check each region for coordinate/name changes
+                                for (int idx = 0; idx < structMeta.RegionInfo.RegionList.Count; idx++)
+                                {
+                                    var reg = structMeta.RegionInfo.RegionList[idx];
+                                    decimal? h = decimal.TryParse(reg.Area.H, out var hVal) ? hVal : null;
+                                    decimal? w = decimal.TryParse(reg.Area.W, out var wVal) ? wVal : null;
+                                    decimal? x = decimal.TryParse(reg.Area.X, out var xVal) ? xVal : null;
+                                    decimal? y = decimal.TryParse(reg.Area.Y, out var yVal) ? yVal : null;
+                                    decimal? d = decimal.TryParse(reg.Area.D, out var dVal) ? dVal : null;
+                                    
+                                    var matchingRegion = existingRegions.FirstOrDefault(r => 
+                                        StructService.RegionCoordinatesMatch(r, h, w, x, y, d) &&
+                                        r.RegionName == reg.Name?.Trim() &&
+                                        r.RegionType == reg.Type?.Trim() &&
+                                        r.RegionAreaUnit == reg.Area.Unit?.Trim());
+                                    
+                                    if (matchingRegion == null)
+                                    {
+                                        regionsWillChange = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
-
-                    // Save the changes to the database
-                    await SaveChangesWithRetry(dbFilesUpdate);
+                    catch { /* Ignore parse errors */ }
                 }
-            }
+                
+                // PATH DECISION: Choose optimal thumbnail generation strategy
+                if (generateThumbnails)
+                {
+                    // PATH 1: No thumbnail exists - check cache first, then generate if needed
+                    if (existingThumbnail == null || existingThumbnail.Length == 0)
+                    {
+                        // OPTIMIZATION: Check if thumbnail was pre-generated in parallel batch
+                        if (thumbnailCache != null && pixelHashCache != null &&
+                            thumbnailCache.TryGetValue(sourceFilePath, out var cachedThumb) && 
+                            pixelHashCache.TryGetValue(sourceFilePath, out var cachedHash))
+                        {
+                            mainThumbnail = cachedThumb;
+                            computedPixelHash = cachedHash;
+                            
+                            // If regions will change, load image for region extraction
+                            if (regionsWillChange)
+                            {
+                                try
+                                {
+                                    cachedImageForRegions = new MagickImage(sourceFilePath);
+                                    cachedImageForRegions.AutoOrient();
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[WARNING] Image load for regions failed: {ex.Message}");
+                                }
+                            }
+                            
+                            Console.WriteLine($"[THUMBNAIL] Using pre-generated cache: {sourceFilePath}");
+                        }
+                        else
+                        {
+                            // Cache miss - generate now (fallback for edge cases)
+                            try
+                            {
+                                var (thumb, hash, loadedImage) = ImageToThumbnailBlobWithHashAndImage(sourceFilePath);
+                                mainThumbnail = thumb;
+                                computedPixelHash = hash;
+                                cachedImageForRegions = loadedImage; // Cache for region extraction
+                                Console.WriteLine($"[THUMBNAIL] Generated for first time: {sourceFilePath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[WARNING] Thumbnail generation failed for {sourceFilePath}: {ex.Message}");
+                                LogEntry(batchId ?? 0, sourceFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
+                            }
+                        }
+                    }
+                    // PATH 2: Thumbnail exists + No region changes - validate PixelHash with optimized load
+                    else if (!regionsWillChange)
+                    {
+                        // Quick PixelHash comparison using low-res load
+                        if (!string.IsNullOrEmpty(existingPixelHash))
+                        {
+                            try
+                            {
+                                string currentHash = ComputePixelHashOptimized(sourceFilePath);
+                                
+                                if (currentHash != existingPixelHash)
+                                {
+                                    // Pixels changed - regenerate thumbnail
+                                    var (thumb, hash, loadedImage) = ImageToThumbnailBlobWithHashAndImage(sourceFilePath);
+                                    mainThumbnail = thumb;
+                                    computedPixelHash = hash;
+                                    loadedImage?.Dispose(); // No regions changing, don't cache
+                                    Console.WriteLine($"[THUMBNAIL] Regenerated due to pixel hash mismatch: {sourceFilePath}");
+                                }
+                                else
+                                {
+                                    // Pixels unchanged - keep existing thumbnail
+                                    Console.WriteLine($"[THUMBNAIL] Preserved (PixelHash matches, no region changes): {sourceFilePath}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[WARNING] PixelHash validation failed for {sourceFilePath}: {ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            // Legacy: No hash exists - compute it once
+                            try
+                            {
+                                string currentHash = ComputePixelHashOptimized(sourceFilePath);
+                                computedPixelHash = currentHash;
+                                Console.WriteLine($"[THUMBNAIL] Preserved existing, computed pixel hash: {sourceFilePath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[WARNING] PixelHash computation failed for {sourceFilePath}: {ex.Message}");
+                            }
+                        }
+                    }
+                    // PATH 3: Regions changed - assume pixel change, regenerate main + use for regions
+                    else // regionsWillChange == true
+                    {
+                        try
+                        {
+                            var (thumb, hash, loadedImage) = ImageToThumbnailBlobWithHashAndImage(sourceFilePath);
+                            mainThumbnail = thumb;
+                            computedPixelHash = hash;
+                            cachedImageForRegions = loadedImage; // Cache for region extraction
+                            Console.WriteLine($"[THUMBNAIL] Regenerated due to region changes: {sourceFilePath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[WARNING] Thumbnail generation failed for {sourceFilePath}: {ex.Message}");
+                            LogEntry(batchId ?? 0, sourceFilePath, "[THUMBNAIL] Generation failed: " + ex.Message);
+                        }
+                    }
+                }
+                
+                // Process people tags
+                await ProcessPeopleTags(dbFiles, imageID, doc);
+
+                // Process MWG Regions, Collections, and Persons
+                await ProcessMWGStructuredData(dbFiles, imageID, structJsonMetadata, sourceFilePath, generateRegionThumbnails, null, cachedImageForRegions);
+                cachedImageForRegions = null; // Ownership transferred
+
+                // Process descriptive tags/keywords
+                await ProcessDescriptiveTags(dbFiles, imageID, doc);
+
+                // Process IPTC location identifiers
+                await ProcessLocationIdentifiers(dbFiles, imageID, doc, location);
+
+                // Update the image record with extracted metadata
+                using var dbFilesUpdate = new CDatabaseImageDBsqliteContext();
+                {
+                    var image = dbFilesUpdate.Images.FirstOrDefault(img => img.ImageId == imageID);
+
+                    if (image != null)
+                    {
+                        // Update the Date field (assuming Date is a DateTime property)
+                        image.Title = title;
+                        image.Description = description;
+                        image.Rating = rating;
+                        image.DateTimeTaken = dateTimeTaken;
+                        image.DateTimeTakenTimeZone = dateTimeTakenTimeZone;
+                        image.Device = device;
+                        image.Latitude = latitude;
+                        image.Longitude = longitude;
+                        image.Altitude = altitude;
+                        image.Location = location;
+                        image.City = city;
+                        image.StateProvince = stateProvince;
+                        image.Country = country;
+                        image.CountryCode = countryCode;
+                        image.Creator = creator;
+                        image.Copyright = copyright;
+                        image.FileCreatedDate = fileCreatedDate;
+                        image.FileModifiedDate = fileModifiedDate;
+                        image.DateTimeTakenSource = dateTimeTakenSource;
+                        
+                        // Update thumbnail and pixel hash (may be new, updated, or preserved)
+                        if (mainThumbnail != null)
+                        {
+                            image.Thumbnail = mainThumbnail;
+                        }
+                        if (!string.IsNullOrEmpty(computedPixelHash))
+                        {
+                            image.PixelHash = computedPixelHash;
+                        }
+
+                        // Update the file path and other properties only when necessary. Not needed when executed a metadata reload.
+                        if (updatedSHA1 != String.Empty)
+                        {
+                            image.Sha1 = updatedSHA1;
+                            image.ModifiedBatchId = batchId;
+                        }
+
+                        // Save the changes to the database
+                        await SaveChangesWithRetry(dbFilesUpdate);
+                    }
+                }
             }
         }
         catch (JsonException jex)
@@ -1490,20 +1932,22 @@ static HashSet<string> GetExiftoolListValues(JsonDocument doc, string[] exiftool
             // If it's a string, add it directly to the list
             if (values.ValueKind == JsonValueKind.String)
             {
-                exiftoolValues.Add(values.GetString());
+                var stringValue = values.GetString();
+                if (stringValue != null) exiftoolValues.Add(stringValue);
             }
             else if (values.ValueKind == JsonValueKind.Array)
             {
                 // If it's an array, iterate over the array and add each value
                 foreach (var name in values.EnumerateArray())
                 {
-                    exiftoolValues.Add(name.GetString());
+                    var stringValue = name.GetString();
+                    if (stringValue != null) exiftoolValues.Add(stringValue);
                 }
             }
         }
     }
 
-    // Return the list of people tags
+    // Return the collected values
     return exiftoolValues;
 }
 
@@ -1531,7 +1975,7 @@ static string GetJsonValue(JsonDocument doc, string exiftoolTag)
 {
     if (doc.RootElement.TryGetProperty(exiftoolTag, out var tagValue) && !string.IsNullOrWhiteSpace(tagValue.GetString()))
     {
-        return tagValue.GetString().Trim();
+        return tagValue.GetString()?.Trim() ?? string.Empty;
     }
     return string.Empty;
 }
@@ -1683,7 +2127,8 @@ static string NormalizePathCase(string folderPath)
         return string.Empty;
     }
     // Get the photo library path (e.g., C:\)
-    string root = Path.GetPathRoot(folderPath);
+    string? root = Path.GetPathRoot(folderPath);
+    if (root == null) return folderPath;
 
     // Get all directories and the file name if any
     string[] directories = folderPath.Substring(root.Length).Split(Path.DirectorySeparatorChar);
@@ -1715,11 +2160,27 @@ static string NormalizePathCase(string folderPath)
 
 static string getFileSHA1(string filepath)
 {
-    using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, FileReadBufferSize))
+    // PERFORMANCE: Optimized buffer size and file options for maximum throughput
+    const int bufferSize = 1024 * 1024; // 1MB buffer (16x larger than default)
+    
+    // FileOptions optimization:
+    // - SequentialScan: Hints OS for sequential read-ahead caching
+    // - Asynchronous: Allows overlapped I/O operations
+    // - NoBuffering: Bypasses OS file cache for large files (reduces memory pressure)
+    var options = FileOptions.SequentialScan | FileOptions.Asynchronous;
+
+    using (FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, options))
     using (SHA1 sha = SHA1.Create())
     {
         byte[] checksum = sha.ComputeHash(stream);
-        return BitConverter.ToString(checksum).Replace("-", string.Empty);
+        
+        // PERFORMANCE: Pre-allocate string builder for hex conversion (faster than Replace)
+        var sb = new System.Text.StringBuilder(checksum.Length * 2);
+        foreach (byte b in checksum)
+        {
+            sb.Append(b.ToString("X2"));
+        }
+        return sb.ToString();
     }
 }
 
@@ -1757,173 +2218,346 @@ static async Task CopyImageToMetadataHistory(int imageId)
 }
 
 
-static byte[] ExtractRegionToBlob( string imagePath, string hStr, string wStr, string xStr, string yStr, int maxThumbSize = 384)   // keeps SQLite BLOB sizes small
+/// <summary>
+/// Extracts region thumbnails from a pre-loaded MagickImage (optimized for reuse).
+/// </summary>
+/// <param name="sourceImage">Pre-loaded and oriented MagickImage.</param>
+/// <param name="regions">List of MWG region coordinates (h, w, x, y as strings in 0.0-1.0 range).</param>
+/// <param name="maxThumbSize">Maximum dimension for each thumbnail (default 384px).</param>
+/// <returns>Array of WebP-encoded byte arrays (or null for failed extractions).</returns>
+static byte[]?[] ExtractRegionsToBlobBatchFromImage(MagickImage sourceImage, List<(string h, string w, string x, string y)> regions, int maxThumbSize = 384)
 {
-    // Parse MWG-normalized region strings
-    double h = double.Parse(hStr, CultureInfo.InvariantCulture);
-    double w = double.Parse(wStr, CultureInfo.InvariantCulture);
-    double x = double.Parse(xStr, CultureInfo.InvariantCulture);
-    double y = double.Parse(yStr, CultureInfo.InvariantCulture);
+    if (regions == null || regions.Count == 0)
+        return Array.Empty<byte[]?>();
 
-    using var img = new MagickImage(imagePath);
+    int imgWidth = (int)sourceImage.Width;
+    int imgHeight = (int)sourceImage.Height;
 
-    // Width/Height are uint in MagickImage — cast explicitly to int for calculations
-    int imgWidth = (int)img.Width;
-    int imgHeight = (int)img.Height;
+    var results = new byte[]?[regions.Count];
+    var lockObj = new object();
 
-    // Convert MWG normalized width/height to pixels (rounded)
-    int regionWidth = (int)Math.Round(w * imgWidth);
-    int regionHeight = (int)Math.Round(h * imgHeight);
-
-    // Compute MWG center-origin → top-left pixel
-    int left = (int)Math.Round((x * imgWidth) - (regionWidth / 2.0));
-    int top = (int)Math.Round((y * imgHeight) - (regionHeight / 2.0));
-
-    // Clamp boundaries
-    left = Math.Max(0, Math.Min(left, imgWidth - 1));
-    top = Math.Max(0, Math.Min(top, imgHeight - 1));
-
-    if (left + regionWidth > imgWidth)
-        regionWidth = imgWidth - left;
-
-    if (top + regionHeight > imgHeight)
-        regionHeight = imgHeight - top;
-
-    // Crop the region. MagickGeometry expects unsigned width/height in some overloads.
-    var cropGeometry = new MagickGeometry(left, top, (uint)Math.Max(0, regionWidth), (uint)Math.Max(0, regionHeight))
+    // OPTIMIZATION: Parallel processing of regions on multi-core systems
+    Parallel.For(0, regions.Count, i =>
     {
-        IgnoreAspectRatio = true
-    };
+        var (hStr, wStr, xStr, yStr) = regions[i];
 
-    using var region = img.Clone();
-    region.Crop(cropGeometry);
-
-    // Clear page offset (replacement for RePage) by resetting Page to the cropped size.
-    // Page expects geometry where width/height are unsigned.
-    region.Page = new MagickGeometry(0, 0, (uint)region.Width, (uint)region.Height);
-
-    //
-    // Thumbnail resize step — reduces DB BLOB size dramatically
-    //
-    int maxDim = Math.Max((int)region.Width, (int)region.Height);
-    if (maxDim > maxThumbSize)
-    {
-        double scale = (double)maxThumbSize / maxDim;
-        int newW = (int)Math.Round(region.Width * scale);
-        int newH = (int)Math.Round(region.Height * scale);
-
-        // Use unsigned constructor for MagickGeometry(width, height)
-        region.Resize(new MagickGeometry((uint)Math.Max(1, newW), (uint)Math.Max(1, newH))
+        try
         {
-            IgnoreAspectRatio = false
-        });
-    }
+            // Parse MWG-normalized region coordinates (0.0-1.0 range)
+            double h = double.Parse(hStr, CultureInfo.InvariantCulture);
+            double w = double.Parse(wStr, CultureInfo.InvariantCulture);
+            double x = double.Parse(xStr, CultureInfo.InvariantCulture);
+            double y = double.Parse(yStr, CultureInfo.InvariantCulture);
 
-    // Encode to WebP by setting Format and Quality on the image instance.
-    // Avoid using WebPWriteDefines + ToByteArray overload which is not available.
-    region.Format = MagickFormat.WebP;
+            // Convert MWG normalized coordinates to pixel values
+            int regionWidth = (int)Math.Round(w * imgWidth);
+            int regionHeight = (int)Math.Round(h * imgHeight);
 
-    // Set quality (75 is a reasonable default). Quality is an int property on MagickImage.
-    region.Quality = 60;
+            // Compute MWG center-origin → top-left pixel coordinates
+            int left = (int)Math.Round((x * imgWidth) - (regionWidth / 2.0));
+            int top = (int)Math.Round((y * imgHeight) - (regionHeight / 2.0));
 
-    // Return encoded bytes (ToByteArray uses current Format)
-    return region.ToByteArray();
+            // Clamp boundaries to ensure valid crop region
+            left = Math.Max(0, Math.Min(left, imgWidth - 1));
+            top = Math.Max(0, Math.Min(top, imgHeight - 1));
+
+            if (left + regionWidth > imgWidth)
+                regionWidth = imgWidth - left;
+
+            if (top + regionHeight > imgHeight)
+                regionHeight = imgHeight - top;
+
+            // Calculate target thumbnail dimensions while preserving aspect ratio
+            int maxDim = Math.Max(regionWidth, regionHeight);
+            int targetWidth = regionWidth;
+            int targetHeight = regionHeight;
+
+            if (maxDim > maxThumbSize)
+            {
+                double scale = (double)maxThumbSize / maxDim;
+                targetWidth = Math.Max(1, (int)Math.Round(regionWidth * scale));
+                targetHeight = Math.Max(1, (int)Math.Round(regionHeight * scale));
+            }
+
+            // Clone for thread-safe parallel processing
+            MagickImage region;
+            lock (lockObj)
+            {
+                region = (MagickImage)sourceImage.Clone();
+            }
+
+            using (region)
+            {
+                // Crop to region boundaries
+                var cropGeometry = new MagickGeometry(left, top, (uint)Math.Max(1, regionWidth), (uint)Math.Max(1, regionHeight))
+                {
+                    IgnoreAspectRatio = true
+                };
+                region.Crop(cropGeometry);
+
+                // Reset page offset to prevent issues with subsequent operations
+                region.Page = new MagickGeometry(0, 0, (uint)region.Width, (uint)region.Height);
+
+                // Resize to thumbnail dimensions if needed
+                if (maxDim > maxThumbSize)
+                {
+                    region.Resize(new MagickGeometry((uint)targetWidth, (uint)targetHeight)
+                    {
+                        IgnoreAspectRatio = false
+                    });
+                }
+
+                // Encode as WebP with reasonable quality for small file size
+                region.Format = MagickFormat.WebP;
+                region.Quality = 60;
+
+                results[i] = region.ToByteArray();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARNING] Failed to extract region {i}: {ex.Message}");
+            results[i] = null; // Mark failed extraction
+        }
+    });
+
+    return results;
 }
 
-static (byte[] thumbnail, string pixelHash) ImageToThumbnailBlobWithHash(string imagePath, int maxThumbSize = 384)
+/// <summary>
+/// OPTIMIZED: Generates file SHA1, thumbnail, and pixel hash with minimal I/O.
+/// Computes SHA1 from raw file bytes (for integrity checking), then loads image ONCE for thumbnail + pixel hash.
+/// This reduces duplicate image decoding (was: load for thumbnail, load again for pixel hash).
+/// Returns all three artifacts needed for database storage.
+/// </summary>
+/// <param name="imagePath">Path to the source image file.</param>
+/// <param name="maxThumbSize">Maximum thumbnail dimension (default 384px).</param>
+/// <returns>Tuple of (fileSHA1, thumbnail bytes, pixelHash, loaded MagickImage for region extraction or null).</returns>
+static (string fileSHA1, byte[] thumbnail, string pixelHash, MagickImage? loadedImage) GenerateSHA1AndThumbnailCombined(string imagePath, int maxThumbSize = 384)
 {
-    using var img = new MagickImage(imagePath);
-
-    int imgWidth = (int)img.Width;
-    int imgHeight = (int)img.Height;
-    
-    // Compute pixel hash BEFORE orientation/resizing (on original decoded pixels)
-    // Optimization: Use smaller thumbnail for hash instead of full-size RGB (60-90% faster)
-    string pixelHash = string.Empty;
     try
     {
-        // Create a small normalized version for hashing (256px max dimension)
-        int hashMaxDim = Math.Max(imgWidth, imgHeight);
-        int hashSize = Math.Min(hashMaxDim, 256); // Hash on 256px version (good balance)
-        
-        if (hashMaxDim > hashSize)
+        // STEP 1: Compute file SHA1 from raw file bytes (for integrity checking)
+        // This MUST match the file-based SHA1 used elsewhere for change detection
+        string fileSHA1;
+        try
         {
-            double hashScale = (double)hashSize / hashMaxDim;
-            int hashW = (int)Math.Round(imgWidth * hashScale);
-            int hashH = (int)Math.Round(imgHeight * hashScale);
-            
-            // Resize in-place (modifies img buffer temporarily)
-            img.Resize(new MagickGeometry((uint)Math.Max(hashW, 1), (uint)Math.Max(hashH, 1))
+            fileSHA1 = getFileSHA1(imagePath);
+        }
+        catch
+        {
+            fileSHA1 = string.Empty;
+        }
+
+        // Fast path: get image dimensions without decoding full pixels
+        var info = new MagickImageInfo(imagePath);
+        int imgWidth = (int)info.Width;
+        int imgHeight = (int)info.Height;
+
+        // STEP 2: SINGLE IMAGE LOAD for thumbnail + pixel hash operations
+        var sourceImage = new MagickImage(imagePath);
+        sourceImage.AutoOrient();
+
+        // STEP 2: Compute pixel hash from downscaled version (256px max dimension)
+        string pixelHash;
+        try
+        {
+            int hashMaxDim = Math.Max(imgWidth, imgHeight);
+            int hashSize = Math.Min(hashMaxDim, 256);
+            double hashScale = hashMaxDim > 0 ? (double)hashSize / hashMaxDim : 1.0;
+            int hashW = Math.Max((int)Math.Round(imgWidth * hashScale), 1);
+            int hashH = Math.Max((int)Math.Round(imgHeight * hashScale), 1);
+
+            using (var imgHash = (MagickImage)sourceImage.Clone())
             {
-                IgnoreAspectRatio = false
-            });
+                imgHash.Resize((uint)hashW, (uint)hashH);
+                imgHash.Strip();
+                byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
+                using (SHA1 sha = SHA1.Create())
+                {
+                    byte[] checksum = sha.ComputeHash(pixelData);
+                    pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
+                }
+            }
         }
-        
-        // Strip metadata and hash the resized pixel data (much smaller than original)
-        img.Strip();
-        byte[] pixelData = img.ToByteArray(MagickFormat.Rgb);
-        
-        using (SHA1 sha = SHA1.Create())
+        catch
         {
-            byte[] checksum = sha.ComputeHash(pixelData);
-            // Optimization: Use StringBuilder or direct hex conversion (faster than Replace)
-            pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
+            pixelHash = string.Empty;
         }
-        
-        // Reload original image for thumbnail generation
-        img.Read(imagePath);
+
+        // STEP 3: Generate main thumbnail
+        byte[] mainThumbnail;
+        try
+        {
+            int maxDim = Math.Max(imgWidth, imgHeight);
+            int newW = imgWidth;
+            int newH = imgHeight;
+            if (maxDim > maxThumbSize)
+            {
+                double scale = (double)maxThumbSize / maxDim;
+                newW = Math.Max((int)Math.Round(imgWidth * scale), 1);
+                newH = Math.Max((int)Math.Round(imgHeight * scale), 1);
+            }
+
+            using (var mainThumb = (MagickImage)sourceImage.Clone())
+            {
+                if (maxDim > maxThumbSize)
+                {
+                    mainThumb.Resize((uint)newW, (uint)newH);
+                }
+                mainThumb.Page = new MagickGeometry(0, 0, (uint)mainThumb.Width, (uint)mainThumb.Height);
+                mainThumb.Format = MagickFormat.WebP;
+                mainThumb.Quality = 60;
+                mainThumbnail = mainThumb.ToByteArray();
+            }
+        }
+        catch
+        {
+            mainThumbnail = Array.Empty<byte>();
+        }
+
+        // Return loaded image for potential region extraction (caller owns disposal)
+        return (fileSHA1, mainThumbnail, pixelHash, sourceImage);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[WARNING] Combined generation failed for {imagePath}: {ex.Message}");
+        return (string.Empty, Array.Empty<byte>(), string.Empty, null);
+    }
+}
+
+/// <summary>
+/// Computes PixelHash using optimized low-resolution load (for quick validation without full thumbnail generation).
+/// Uses same hash algorithm as full generation for consistency.
+/// </summary>
+/// <param name="imagePath">Path to the source image file.</param>
+/// <returns>SHA1 hash of downscaled RGB pixel data.</returns>
+static string ComputePixelHashOptimized(string imagePath)
+{
+    try
+    {
+        // Fast path: get image dimensions without decoding full pixels
+        var info = new MagickImageInfo(imagePath);
+        int imgWidth = (int)info.Width;
+        int imgHeight = (int)info.Height;
+
+        // Load and auto-orient
+        using var sourceImage = new MagickImage(imagePath);
+        sourceImage.AutoOrient();
+
+        // Compute hash from downscaled version (256px max dimension)
+        int hashMaxDim = Math.Max(imgWidth, imgHeight);
+        int hashSize = Math.Min(hashMaxDim, 256);
+        double hashScale = hashMaxDim > 0 ? (double)hashSize / hashMaxDim : 1.0;
+        int hashW = Math.Max((int)Math.Round(imgWidth * hashScale), 1);
+        int hashH = Math.Max((int)Math.Round(imgHeight * hashScale), 1);
+
+        using (var imgHash = (MagickImage)sourceImage.Clone())
+        {
+            imgHash.Resize((uint)hashW, (uint)hashH);
+            imgHash.Strip();
+            byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
+            using (SHA1 sha = SHA1.Create())
+            {
+                byte[] checksum = sha.ComputeHash(pixelData);
+                return string.Concat(checksum.Select(b => b.ToString("X2")));
+            }
+        }
     }
     catch
     {
-        // If pixel hash fails, reload image and continue with thumbnail generation
-        try { img.Read(imagePath); } catch { /* Already loaded or unrecoverable */ }
+        return string.Empty;
+    }
+}
+
+/// <summary>
+/// Extracts multiple face/region thumbnails from an image in a single pass.
+/// Significantly faster than individual calls when an image has multiple regions (e.g., group photos).
+/// NOTE: For new images with regions, use GenerateAllThumbnailsWithHash() instead to avoid loading image twice.
+/// </summary>
+/// <param name="imagePath">Path to the source image file.</param>
+/// <param name="regions">List of MWG region coordinates (h, w, x, y as strings in 0.0-1.0 range).</param>
+/// <param name="maxThumbSize">Maximum dimension for each thumbnail (default 384px).</param>
+/// <returns>Array of WebP-encoded byte arrays (or null for failed extractions), one per region in same order as input.</returns>
+static byte[]?[] ExtractRegionsToBlobBatch(string imagePath, List<(string h, string w, string x, string y)> regions, int maxThumbSize = 384)
+{
+    if (regions == null || regions.Count == 0)
+        return Array.Empty<byte[]?>();
+
+    // Fast path: get image dimensions without decoding pixels
+    var info = new MagickImageInfo(imagePath);
+
+    // Load image ONCE for all region extractions (major performance win)
+    using var sourceImage = new MagickImage(imagePath);
+    sourceImage.AutoOrient(); // Apply EXIF orientation once
+
+    return ExtractRegionsToBlobBatchFromImage(sourceImage, regions, maxThumbSize);
+}
+
+/// <summary>
+/// Generates main thumbnail with pixel hash AND returns loaded MagickImage for potential reuse.
+/// </summary>
+static (byte[] thumbnail, string pixelHash, MagickImage? loadedImage) ImageToThumbnailBlobWithHashAndImage(string imagePath, int maxThumbSize = 384)
+{
+    var info = new MagickImageInfo(imagePath);
+    int imgWidth = (int)info.Width;
+    int imgHeight = (int)info.Height;
+
+    var sourceImage = new MagickImage(imagePath);
+    sourceImage.AutoOrient();
+
+    // Compute pixel hash
+    string pixelHash = string.Empty;
+    try
+    {
+        int hashMaxDim = Math.Max(imgWidth, imgHeight);
+        int hashSize = Math.Min(hashMaxDim, 256);
+        double hashScale = hashMaxDim > 0 ? (double)hashSize / hashMaxDim : 1.0;
+        int hashW = Math.Max((int)Math.Round(imgWidth * hashScale), 1);
+        int hashH = Math.Max((int)Math.Round(imgHeight * hashScale), 1);
+
+        using (var imgHash = (MagickImage)sourceImage.Clone())
+        {
+            imgHash.Resize((uint)hashW, (uint)hashH);
+            imgHash.Strip();
+            byte[] pixelData = imgHash.ToByteArray(MagickFormat.Rgb);
+            using (SHA1 sha = SHA1.Create())
+            {
+                byte[] checksum = sha.ComputeHash(pixelData);
+                pixelHash = string.Concat(checksum.Select(b => b.ToString("X2")));
+            }
+        }
+    }
+    catch
+    {
         pixelHash = string.Empty;
     }
 
-    // Apply EXIF orientation for thumbnail (after hashing)
-    img.AutoOrient();
-    
-    imgWidth = (int)img.Width;
-    imgHeight = (int)img.Height;
-
-    //
-    // Compute proper thumbnail dimensions (preserving aspect ratio)
-    //
+    // Generate main thumbnail
+    byte[] mainThumbnail;
     int maxDim = Math.Max(imgWidth, imgHeight);
     int newW = imgWidth;
     int newH = imgHeight;
-
-    // Only resize if image exceeds max thumbnail size
     if (maxDim > maxThumbSize)
     {
         double scale = (double)maxThumbSize / maxDim;
-        newW = (int)Math.Round(imgWidth * scale);
-        newH = (int)Math.Round(imgHeight * scale);
+        newW = Math.Max((int)Math.Round(imgWidth * scale), 1);
+        newH = Math.Max((int)Math.Round(imgHeight * scale), 1);
     }
 
-    //
-    // Resize internal image buffer
-    //
-    img.Resize(new MagickGeometry((uint)Math.Max(newW, 1), (uint)Math.Max(newH, 1))
+    using (var mainThumb = (MagickImage)sourceImage.Clone())
     {
-        IgnoreAspectRatio = false
-    });
+        if (maxDim > maxThumbSize)
+        {
+            mainThumb.Resize((uint)newW, (uint)newH);
+        }
+        mainThumb.Page = new MagickGeometry(0, 0, (uint)mainThumb.Width, (uint)mainThumb.Height);
+        mainThumb.Format = MagickFormat.WebP;
+        mainThumb.Quality = 60;
+        mainThumbnail = mainThumb.ToByteArray();
+    }
 
-    //
-    // Reset page offset (replacement for RePage)
-    //
-    img.Page = new MagickGeometry(0, 0, (uint)img.Width, (uint)img.Height);
-
-    //
-    // Encode as WebP
-    //
-    img.Format = MagickFormat.WebP;
-    img.Quality = 60;   // lightweight thumbnail—tweak as needed
-
-    //
-    // Return blob and pixel hash
-    //
-    return (img.ToByteArray(), pixelHash);
+    return (mainThumbnail, pixelHash, sourceImage);
 }
 
 
